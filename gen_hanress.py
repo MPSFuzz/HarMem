@@ -87,15 +87,16 @@ def get_available_harness(source_dir: str, dot_file: str, target_func: str|None 
         except Exception as e:
             print(f"LLM generation failed with error: {e}")
         
-        ava_flag = llm.harness_instance.compile_result()
+        ava_flag = llm.harness_instance.compile_test()
 
         while ava_flag == False and fix_count < 3:
             try:
                 llm.harness_fix()
+                llm.harness_instance.complete_compile_command()
             except Exception as e:
                 print(f"LLM fix failed with error: {e}")
             
-            ava_flag = llm.harness_instance.compile_result()
+            ava_flag = llm.harness_instance.compile_test()
             fix_count += 1
         
         gen_count += 1

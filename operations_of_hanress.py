@@ -39,18 +39,19 @@ class harness:
         filename, _ = os.path.splitext(self.code_file)
         compile_command_template = self.compile_command
         compile_command_modified = re.sub(r'\ba\.out\b', f"{filename}.out", compile_command_template)
-        compile_command_modified = re.sub(r'\ba\.c\b', f"{filename}.c", compile_command_template)
+        compile_command_modified = re.sub(r'\ba\.c\b', f"{filename}.c", compile_command_modified)
 
         self.compile_command = compile_command_modified
 
-    def compile_test(self, compile_command: str) -> bool:
+    def compile_test(self) -> bool:
         try:
             self.compile_result = subprocess.run(
-                compile_command,
+                self.compile_command,
                 stdout = subprocess.PIPE,
                 stderr = subprocess.PIPE,
                 text = True,
-                check = True)
+                check = True,
+                shell=True)
             print("Compilation succeeded with output \n")
             return True
         except subprocess.CalledProcessError as e: #前面的subprocess中的check可以直接用于gcc编译的执行结果判断，如果执行失败了会抛出一个subprocess.CalledProcessError 异常

@@ -86,13 +86,18 @@ HARNESS_FIX = """
         The code I give you had encountered some problems during compilation. \
         The code that encountered the problem is as follows: \
         %s \
-        The compile command I use to compile the code is as follows: \
+        The compile command last time you give me that I use to compile the code is as follows: \
         %s \
         The error message is: \
         %s \
-        Now you need to modify the code I gave you to fix the problem it encountered. \
         
-        When you finish the code modification, please give me the compile command. In the compile command you give, use a.c to refer to the code, and a.out to execution file,\
+        Now you need to modify the code or compile command I gave you to fix the problem it encountered. \
+        
+        If there is a problem such as "No such file or directory" in the compilation error caused by the relevant library not being found, \
+        give priority to using tools such as pkg-config to repair the compilation command
+        
+        When you finish the code or compile command modification, please give me the result. \
+        In the compile command you give, use a.c to refer to the code, and a.out to execution file,\
         and make sure the compile command can compile the code successfully. \
         
         Your answer needs to be in json format containing two properties: code and compile_command. \

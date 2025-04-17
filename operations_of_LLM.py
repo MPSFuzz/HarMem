@@ -102,7 +102,7 @@ class LLM:
                         },
                         "compile_command": {
                             "type": "string",
-                            "description": f"The compilation command for the code after fixng.Using a.c to refer to the code, and a.out to execution file."
+                            "description": f"The compilation command after modifing.Using a.c to refer to the code, and a.out to execution file."
                         },
                     },
                     "required": ["code", "compile_command"],
