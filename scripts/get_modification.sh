@@ -1,71 +1,58 @@
 #!/bin/bash
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <old_commit> <new_commit>"
+# Usage: ./extract_modified_funcs.sh <source_dir> <old_commit> <new_commit>
+
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $0 <source_dir> <old_commit> <new_commit>"
     exit 1
 fi
 
-OLD_COMMIT=$1
-NEW_COMMIT=$2
+TARGET_DIR=$1
+OLD_COMMIT=$2
+NEW_COMMIT=$3
+
 tmp_diff_file=$(mktemp)
 output_file="./fixedfunc.txt"
 
-trap 'rm -f "$tmp_diff_file" "$output_file"' EXIT
+trap 'rm -f "$tmp_diff_file"' EXIT
 
-git diff $OLD_COMMIT $NEW_COMMIT > "$tmp_diff_file"
-flag=0
-flag2=0
-funcname=""
-newline=""
-filename=""
-regex='[_a-zA-Z][_a-zA-Z0-9]*[[:space:]]*\([^)]*\)'
+cd "$TARGET_DIR" || {
+    echo "Error: Could not change directory to $TARGET_DIR"
+    exit 1
+}
+
+# Generate diff with zero context lines and include function name context
+# -U0: no context, -p: show C function name in hunk headers
+git diff -U0 -p "$OLD_COMMIT" "$NEW_COMMIT" > "$tmp_diff_file"
+
+# Looser regex for hunk header extraction: name(params)
+header_regex='[_a-zA-Z][_a-zA-Z0-9]*[[:space:]]*\([^)]*\)'
+
+# Strict regex for detecting added function definitions: return_type name(params) [optional {]
+sig_regex='^[[:space:]]*[_a-zA-Z][_a-zA-Z0-9[:space:]]+[[:space:]]+[_a-zA-Z][_a-zA-Z0-9]*[[:space:]]*\([^;]*\)[[:space:]]*(\{)?[[:space:]]*$'
+
+# Clear output file
+> "$output_file"
+
 while IFS= read -r line; do
-    if [[ $line == diff* ]]; then
-        if [[ $line == *.c ]]; then
-            flag=1
-            filename=$(echo "$line" | awk -F'/' '{print $NF}')
-
-        else
-            flag=0
+    # Extract from hunk header (captures both modified and entirely new functions)
+    if [[ $line == @@*@@* ]]; then
+        func=$(echo "$line" | sed -E 's/^@@[^@]+@@[[:space:]]*//')
+        if [[ $func =~ $header_regex ]]; then
+            echo "$func" >> "$output_file"
         fi
     fi
 
-    if [[ "$flag" -eq 1 ]]; then
-        if [[ "$flag2" -eq 1 ]]; then
-            if [[ ${newline}${line} =~ $regex && "$line" != *"-"* && $line != *";"* && $line != *"="* && "$line" != *"<"* && "$line" != *">"* && "$line" != *"."* && "$line" != *"/*"* ]]; then
-                funcname=${newline}${line}
-                #echo ${filename}:${funcname} >>"$output_file"
-                echo ${funcname} >>"$output_file"
-            fi
-            flag2=0
-        fi
-
-        if [[ $line == @@* ]]; then
-            newline=$(echo "$line" | sed -E 's/^@@[^@]+@@ //')
-            if [[ $newline =~ $regex ]]; then
-                funcname="$newline"
-                #echo ${filename}:${funcname} >>"$output_file"
-                echo ${funcname} >>"$output_file"
-            else
-                flag2=1
-            fi
-        fi
-
-        if [[ $line == +* && $line != *";"* && $line != *"="* && "$line" != *"<"* && "$line" != *">"* && "$line" != *"#"* && "$line" != "+++"* && "$line" != *"-"* && "$line" != *"."* && "$line" != *"/*"* ]]; then
-            if [[ $line == +* ]]; then
-                line=$(echo "$line" | sed 's/^+//') 
-            fi    
-            if [[ $line =~ $regex ]]; then
-                funcname="$line"
-                #echo ${filename}:${funcname} >>"$output_file"
-                echo ${funcname} >>"$output_file"
-            else
-                flag2=1
-                newline=$line
-            fi
+    # Scan added lines for strict function definitions
+    if [[ $line == +* ]]; then
+        candidate=${line#+}
+        if [[ $candidate =~ $sig_regex ]]; then
+            echo "$candidate" >> "$output_file"
         fi
     fi
-done < $tmp_diff_file  # 替换为你的输入文件
 
-if [ -f "$output_file" ]; then
-    cat "$output_file"
+done < "$tmp_diff_file"
+
+# Output unique function signatures
+if [[ -f "$output_file" ]]; then
+    sort -u "$output_file"
 fi

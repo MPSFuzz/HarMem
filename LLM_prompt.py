@@ -94,7 +94,7 @@ HARNESS_FIX = """
         Now you need to modify the code or compile command I gave you to fix the problem it encountered. \
         
         If there is a problem such as "No such file or directory" in the compilation error caused by the relevant library not being found, \
-        give priority to using tools such as pkg-config to repair the compilation command
+        give priority to using tools such as pkg-config to repair the compilation command. \
         
         When you finish the code or compile command modification, please give me the result. \
         In the compile command you give, use a.c to refer to the code, and a.out to execution file,\
