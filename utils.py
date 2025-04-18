@@ -30,5 +30,3 @@ def clean_up_harness_file():
         if not has_out_file:
             shutil.rmtree(dirpath)
 
-if __name__ == "__main__":
-    clean_up_harness_file()
