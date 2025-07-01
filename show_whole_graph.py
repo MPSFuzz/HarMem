@@ -52,19 +52,12 @@ def visualize_full_graph(graph: nx.DiGraph):
     plt.show()
 
 def main():
-    """
-    主函数，用于解析命令行参数并启动可视化。
-    """
-    # 创建一个参数解析器
     parser = argparse.ArgumentParser(description="从 .dot 文件中加载并可视化一个调用图。")
     
-    # 添加一个必须的位置参数 'dot_file'
     parser.add_argument("dot_file", help="需要可视化的 .dot 文件的路径。")
     
-    # 解析命令行传入的参数
     args = parser.parse_args()
     
-    # 执行主逻辑
     graph = load_call_graph(args.dot_file)
     visualize_full_graph(graph)
 
