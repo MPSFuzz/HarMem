@@ -9,6 +9,12 @@ def main():
 
     args_group = parser.add_mutually_exclusive_group(required=True)
 
+    parser.add_argument(
+        "--lib_name", "-l",
+        type=str,
+        help="The name of the library to generate harnesses for. "
+    )
+
     args_group.add_argument(
         "--function_name", "-f",
         type=str,

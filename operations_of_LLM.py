@@ -15,6 +15,8 @@ class LLM:
         self.harness_instance = harness()
         # if 'prompt' in kwargs:
         #     self.prompt = kwargs['prompt']
+        if 'lib_name' in kwargs:
+            self.lib_name = kwargs['lib_name']
         
         if 'target_func' in kwargs:
             self.target_func = kwargs['target_func']
@@ -126,6 +128,7 @@ class LLM:
 
 
 if __name__ == "__main__":
+    lib_name = "libxml2"
     target_func = "xmlNodeGetContent"
     target_location = f"/libxml2/tree.c"
     call_chain =  ['xmlSchematronParse', 'xmlReadFile', 'xmlCtxtNewInputFromUrl', 'xmlLoadResource', 'xmlResolveResourceFromCatalog', \
