@@ -28,7 +28,6 @@ def find_call_chain(graph:nx.DiGraph, target_func) -> list:
     print(f"Roots: {roots}") # 添加这行
     
     valid_paths = set()
-    found_count = 0 # 计数器，用于限制找到的路径数量
 
     reachable_roots = set() #存储从目标节点可以回溯到的根节点
     stack = [target_node] #用于深度优先搜索的栈
