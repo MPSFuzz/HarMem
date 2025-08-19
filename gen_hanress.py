@@ -67,12 +67,7 @@ def get_target_function(func_dir: str, old_commit: str, new_commit: str) -> list
     except subprocess.FileNotFoundError:
         assert False, "The get_modification.sh script was not found." 
 
-def get_available_harness(source_dir: str, dot_file: str, target_func: str|None = None, old_commit: str|None = None, new_commit: str|None = None): #暂定退出循环的条件是获得一个编译成功的harness后退出,返回存储harness的路径
-    if target_func == None:
-        target_funcs = get_target_function(source_dir, old_commit, new_commit)
-        assert target_funcs, "There is no function had been modified in the program"
-    else:
-        target_funcs = [target_func]
+def get_available_harness(source_dir: str, dot_file: str, target_funcs: list): #暂定退出循环的条件是获得一个编译成功的harness后退出,返回存储harness的路径
 
     for target_func in target_funcs:
         call_chains = extract_call_chains(str(target_func), dot_file)

@@ -25,40 +25,21 @@ def find_call_chain(graph:nx.DiGraph, target_func) -> list:
     
     roots = [n for n in graph.nodes if graph.in_degree(n) == 0] #获取所有根节点
 
-    print(f"Roots: {roots}") # 添加这行
+    print(f"Roots: {roots}")
     
     valid_paths = set()
 
-    reachable_roots = set() #存储从目标节点可以回溯到的根节点
-    stack = [target_node] #用于深度优先搜索的栈
-    visited = {target_node} #存储已访问的节点，防止循环
-    predecessors = {node: [] for node in graph.nodes} #存储每个节点的前驱节点
+    for root in roots:
+        if not nx.has_path(graph, root, target_node):
+            continue
 
-    while stack: #实现深搜
-        if len(reachable_roots) >= 5:
-            break
-        current_node = stack.pop()
-        for predecessor in graph.predecessors(current_node):
-            # 如果前驱节点尚未被访问
-            if predecessor not in visited:
-                visited.add(predecessor) # 标记为已访问
-                predecessors[predecessor].append(current_node) # 记录前驱节点到当前节点的连接
-                stack.append(predecessor) # 将前驱节点加入栈，继续向上游搜索
-                if predecessor in roots:
-                    reachable_roots.add(predecessor) # 将其添加到可到达的根节点集合中
-    
-    for root in reachable_roots:
-        # for path in nx.all_simple_paths(graph, source=root, target=target_node): # 使用NetworkX的all_simple_paths函数查找从当前根节点到目标节点的简单路径
-            candidates = nx.algorithms.simple_paths.shortest_simple_paths(graph,
-                                       source=root,
-                                       target=target_node)
-            for path in islice(candidates, 5 - len(valid_paths)):
-                valid_paths.add(tuple(path))
-                if len(valid_paths) >= 5:
-                    break
+        candiate_paths = nx.algorithms.simple_paths.shortest_path(graph, source=root, target=target_node)
+
+        for path in candiate_paths:
+            valid_paths.add(tuple(path))
             if len(valid_paths) >= 5:
                 break
-    
+
     return list(valid_paths)
 
 def convert_to_call_chains(graph:nx.DiGraph, node_chains):
