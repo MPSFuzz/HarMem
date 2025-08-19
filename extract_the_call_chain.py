@@ -33,12 +33,19 @@ def find_call_chain(graph:nx.DiGraph, target_func) -> list:
         if not nx.has_path(graph, root, target_node):
             continue
 
-        candiate_paths = nx.algorithms.simple_paths.shortest_path(graph, source=root, target=target_node)
+        candiate_paths = nx.all_simple_paths(graph, source=root, target=target_node)
 
         for path in candiate_paths:
             valid_paths.add(tuple(path))
             if len(valid_paths) >= 5:
                 break
+    
+    # 这个地方最后产生的valid_paths中包含了100多条路径，需要做一下路径采样，存在大量路径的情况是可以预见的，现在需要一些方法对这些大量的路径进行一下筛选
+    
+    if not valid_paths:
+        print(f"function {target_func} has no valid call chains")
+        valid_paths.add((target_node,))
+        return valid_paths
 
     return list(valid_paths)
 

@@ -8,12 +8,12 @@ if [ "$#" -ne 2 ]; then
 fi
 
 # 获取参数
-LIBXML2_DIR="$1"
+SOURCE_DIR="$1"
 FUNCTION_NAME="$2"
 
 # 检查目录是否存在
-if [ ! -d "$LIBXML2_DIR" ]; then
-    echo "Error: diractory '$LIBXML2_DIR' does not exist。"
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "Error: diractory '$SOURCE_DIR' does not exist。"
     exit 1
 fi
 
@@ -27,6 +27,6 @@ fi
 # \(       - 匹配一个字面的左括号 '('
 # -E       - 使用扩展正则表达式 (支持 \b, \s*)
 # -l       - 只列出包含匹配项的文件名 (List files with matches)
-find "$LIBXML2_DIR" -type f -name '*.c' -exec grep -lE "\b${FUNCTION_NAME}\b\s*\(" {} +
+find "$SOURCE_DIR" -type f -name '*.c' -exec grep -lE "\b${FUNCTION_NAME}\b\s*\(" {} +
 
 exit 0

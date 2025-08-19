@@ -41,32 +41,6 @@ def get_target_func_location(func_dir: str, target_func: str) -> list: #获得�
         print("The get_target_func_location.sh script was not found.")
         assert False, "The get_target_func_location.sh script was not found."
 
-def get_target_function(func_dir: str, old_commit: str, new_commit: str) -> list:
-    try:
-        cp_command = ["cp", f"./scripts/get_modification.sh", f"{func_dir}/"]
-        subprocess.run(cp_command, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        assert False, f"Error copying script: {e}"
-    except subprocess.FileNotFoundError:
-        assert False, "The get_target_func_location.sh script or program file was not found."
-
-    func_dir = standarize_path(func_dir)
-    command = [f"/{func_dir}/get_modification.sh", f"/{func_dir}", old_commit, new_commit]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-        output = result.stdout.strip()
-        if output:
-            function_names = output.splitlines()
-            target_functions = [extract_func_name(function_name) for function_name in function_names]
-            assert target_functions, "There is no function had been modified in the program"
-            return  target_functions
-    except subprocess.CalledProcessError as e:
-        print(f"Error executing command: {e}")
-        assert False, "The get_modification.sh execution failed"
-    
-    except subprocess.FileNotFoundError:
-        assert False, "The get_modification.sh script was not found." 
-
 def get_available_harness(source_dir: str, dot_file: str, target_funcs: list): #暂定退出循环的条件是获得一个编译成功的harness后退出,返回存储harness的路径
 
     for target_func in target_funcs:
@@ -104,5 +78,4 @@ def get_available_harness(source_dir: str, dot_file: str, target_funcs: list): #
     clean_up_harness_file()
 
 
-if __name__ == "__main__":
-    get_target_function("/home/youngmith/autoharness_demo/libxml2_for_test", "c0147cc30a8c98b4abe157b127afb57c2d14fa67", "4f9ecb9026ba25004ee4f32666f24d59197b9abf")
+# if __name__ == "__main__":
