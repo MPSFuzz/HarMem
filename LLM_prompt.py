@@ -136,3 +136,11 @@ HARNESS_FIX = """
         
         Your answer needs to be in json format containing two properties: code and compile_command. \
 """
+
+ENTRY_POINT_FILTER = """
+        You are an expert in C/C++ library fuzz testing. You need to write some harnesses that can reach a target function %s in the %s library. \
+        Here is a list of all root node functions extracted from the tested library CG that may reach the target function : %s. \
+        You need to filter these functions to keep only those that may be worth writing harness tests for. \
+        
+        Return only a JSON object with the following shape (no extra text): {"filtered_apis": ["funcA", "funcB", ...]}
+"""

@@ -42,11 +42,12 @@ def main():
     assert os.path.exists(args.project_path), f"Project path {args.project_path} does not exist."
     assert os.path.isfile(args.dot_file), f"Dot file {args.dot_file} does not exist."
 
+    lib_name = args.lib_name
     source_dir = args.project_path
     dot_file = args.dot_file
     target_funcs = args.function_name
 
-    get_available_harness(source_dir=source_dir, dot_file=dot_file, target_funcs=target_funcs)
+    get_available_harness(lib_name=lib_name, source_dir=source_dir, dot_file=dot_file, target_funcs=target_funcs)
 
 if __name__ == "__main__":
     main()

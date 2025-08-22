@@ -13,26 +13,73 @@ openai.default_headers = {"x-foo": "true"}
 class LLM:
     def __init__(self, **kwargs):
         self.harness_instance = harness()
-        # if 'prompt' in kwargs:
-        #     self.prompt = kwargs['prompt']
+        self.lib_name = kwargs.get("lib_name")
+        self.target_func = kwargs.get("target_func")
+        self.call_chain = kwargs.get("call_chain")
+        self.target_location = kwargs.get("target_location")
+
+        if self.target_func:
+            self.harness_instance.target_func = self.target_func
+    
+    def update(self, **kwargs):
         if 'lib_name' in kwargs:
             self.lib_name = kwargs['lib_name']
-        
         if 'target_func' in kwargs:
             self.target_func = kwargs['target_func']
             self.harness_instance.target_func = self.target_func
-        
         if 'call_chain' in kwargs:
             self.call_chain = kwargs['call_chain']
-        
         if 'target_location' in kwargs:
             self.target_location = kwargs['target_location']
+    
+    def entry_api_filter(self, api_list) -> list:
+        api_filter_prompt = ENTRY_POINT_FILTER % (self.target_func, self.lib_name, api_list)
+
+        response = openai.chat.completions.create(
+            model= "gpt-4-all",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{api_filter_prompt}"
+                    }
+                ]
+            }],
+            response_format={
+                "type": "json_object",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "filtered_apis": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": f"A list of APIs that are entry points for the target function {self.target_func} in the library {self.lib_name}."
+                        }
+                    },
+                    "required": ["filtered_apis"],
+                    "additionalProperties": False
+                }
+            }
+        )
+
+        result = response.choices[0].message.content
+
+        try:
+            content = json.loads(result)
+        except json.JSONDecodeError as e:
+            print(f"error:{e}")
+            print(result)
+        
+        return content['filtered_apis']
     
     def generate_code(self) -> dict:
         code_prompt = CODE_GENERATE_PROMPT % (self.target_func, self.call_chain, self.target_location)
 
         response = openai.chat.completions.create(
-            model = "gpt-4o-2024-11-20",
+            model = "gpt-4-all",
             messages=[{
                 "role": "user",
                 "content": [
@@ -85,7 +132,7 @@ class LLM:
         fix_prompt = HARNESS_FIX % (self.harness_instance.code, self.harness_instance.compile_command, self.harness_instance.compile_result)
 
         response = openai.chat.completions.create(
-            model = "gpt-4o-2024-11-20",
+            model = "gpt-4-all",
             messages=[{
                 "role": "user",
                 "content": [

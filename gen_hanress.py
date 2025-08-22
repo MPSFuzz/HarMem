@@ -4,7 +4,7 @@ import subprocess
 import os
 
 from operations_of_LLM import LLM
-from extract_the_call_chain import extract_target_call_chain
+from extract_call_chain import extract_target_call_chain, get_root_apis, load_call_graph
 from utils import *
 
 def extract_call_chains(target_func: str, dot_file: str) -> list: #提取目标函数的调用链
@@ -41,17 +41,26 @@ def get_target_func_location(func_dir: str, target_func: str) -> list: #获得�
         print("The get_target_func_location.sh script was not found.")
         assert False, "The get_target_func_location.sh script was not found."
 
-def get_available_harness(source_dir: str, dot_file: str, target_funcs: list): #暂定退出循环的条件是获得一个编译成功的harness后退出,返回存储harness的路径
+def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_funcs: list): #暂定退出循环的条件是获得一个编译成功的harness后退出,返回存储harness的路径
+    graph = load_call_graph(dot_file=dot_file)
+
+    llm = LLM(target_func = target_func, call_chain = current_call_chain, target_location = str(locations))
 
     for target_func in target_funcs:
-        call_chains = extract_call_chains(str(target_func), dot_file)
         locations = get_target_func_location(source_dir, target_func)
+        root_apis = get_root_apis(graph=graph, target_func=target_func)
+
+        llm.update(lib_name=lib_name, target_func=target_func, call_chain=current_call_chain, target_location=str(locations))
+
+        filtered_entry_apis = llm.entry_api_filter(root_apis=root_apis)
+
+        call_chains = extract_call_chains(str(target_func), dot_file)
+        
         ava_flag = False
         gen_count = 0
         random.shuffle(call_chains)
         while ava_flag == False and gen_count < len(call_chains):
             current_call_chain = call_chains[gen_count]
-            llm = LLM(target_func = target_func, call_chain = current_call_chain, target_location = str(locations))
             fix_count = 0
             try:
                 llm.generate_code()
