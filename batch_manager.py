@@ -6,5 +6,4 @@ from extract_call_chain import load_call_graph, get_root_apis, extract_target_ca
 from gen_hanress import get_available_harness
 
 def set_batch_info(lib_name: str, source_dir: str, dot_file: str, target_funcs: list):
-    graph = load_call_graph(dot_file=dot_file)
-    
+    return

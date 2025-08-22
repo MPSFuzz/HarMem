@@ -2,17 +2,11 @@ import argparse
 import random
 import subprocess
 import os
+import _global_vars
 
 from operations_of_LLM import LLM
 from extract_call_chain import extract_target_call_chain, get_root_apis, load_call_graph
 from utils import *
-
-def extract_call_chains(target_func: str, dot_file: str) -> list: #提取目标函数的调用链
-    call_chains = extract_target_call_chain(dot_file, target_func)
-
-    assert call_chains, "call_chains not found"
-    
-    return call_chains
 
 def get_target_func_location(func_dir: str, target_func: str) -> list: #获得包含目标函数的源文件
     try:
@@ -44,28 +38,28 @@ def get_target_func_location(func_dir: str, target_func: str) -> list: #获得�
 def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_funcs: list): #暂定退出循环的条件是获得一个编译成功的harness后退出,返回存储harness的路径
     graph = load_call_graph(dot_file=dot_file)
 
-    llm = LLM(target_func = target_func, call_chain = current_call_chain, target_location = str(locations))
+    llm = LLM(target_func = target_func, target_location = str(locations))
 
     for target_func in target_funcs:
         locations = get_target_func_location(source_dir, target_func)
         root_apis = get_root_apis(graph=graph, target_func=target_func)
 
-        llm.update(lib_name=lib_name, target_func=target_func, call_chain=current_call_chain, target_location=str(locations))
-
         filtered_entry_apis = llm.entry_api_filter(root_apis=root_apis)
 
-        call_chains = extract_call_chains(str(target_func), dot_file)
+        _global_vars.root_api_and_call_chain = extract_target_call_chain(str(target_func), dot_file, root_nodes=filtered_entry_apis)
         
         ava_flag = False
         gen_count = 0
-        random.shuffle(call_chains)
-        while ava_flag == False and gen_count < len(call_chains):
-            current_call_chain = call_chains[gen_count]
+        fix_count = 0
+        random.shuffle(_global_vars.root_api_and_call_chain)
+
+        for root_api in _global_vars.root_api_and_call_chain:
+            llm.update(lib_name=lib_name, target_func=target_func, call_chain=_global_vars.root_api_and_call_chain[root_api], target_location=str(locations))
             fix_count = 0
             try:
                 llm.generate_code()
             except Exception as e:
-                print(f"LLM generation failed with error: {e}")
+                raise SystemExit(f"LLM generation failed with error: {e}")
             
             ava_flag = llm.harness_instance.compile_test()
 
@@ -79,9 +73,14 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
                 ava_flag = llm.harness_instance.compile_test()
                 fix_count += 1
             
-            gen_count += 1
+            if ava_flag == False:
+                _global_vars.root_api_and_harness[root_api] = None
+                print(f"Harness generation failed for root api {root_api} in function {target_func}")
+            else:
+                _global_vars.root_api_and_harness[root_api] = llm.harness_instance.code_file
+                gen_count += 1
 
-            print(f"harness for function:{llm.harness_instance.target_func} generates successfully\n" \
+            print(f"harness for function:{llm.harness_instance.target_func} in call chain begin at: {root_api} generates successfully\n" \
                 f" The harness for this function has saved to {llm.harness_instance.code_file}")
     
     clean_up_harness_file()

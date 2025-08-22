@@ -79,7 +79,7 @@ def extract_target_call_chain(graph:nx.DiGraph, target_func, root_nodes: list) -
     for root_api in root_nodes:
         all_paths = nx.all_simple_paths(graph, source=root_api, target=target_node, cutoff=7)
 
-        candidate_paths = [path for path in all_paths if 5 <=len(path) <= 7]
+        candidate_paths = [path for path in all_paths if 5 <= len(path) <= 7]
 
         if candidate_paths:
             chosen_path = random.choice(candidate_paths)
