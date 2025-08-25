@@ -1,6 +1,10 @@
 import os
 import re
 import shutil
+import json
+
+from typing import Any, List, Dict
+from batch_class import Batch
 
 FILES_DIR = {
     "DOT_FILE_DIR": "./bc_dot_files/"
@@ -29,4 +33,15 @@ def clean_up_harness_file():
         has_out_file = any(filename.endswith(".out") for filename in filenames)
         if not has_out_file:
             shutil.rmtree(dirpath)
+
+def extract_funcname_from_files(file_path:str) -> list:
+    with open(file_path, "r", encoding="utf-8") as f:
+        funcs = [line.strip() for line in f]
+
+    return funcs
+
+def save_to_json(data:Any, filepath: str = "/temp/"):
+    metadata={metadata.batch_id: metadata.target_func}
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
 
