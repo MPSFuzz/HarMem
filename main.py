@@ -9,6 +9,9 @@ def main():
 
     # args_group = parser.add_mutually_exclusive_group(required=True)
 
+    #TODO: 当前的生成harness的粒度是函数级别的，后续需要将这个粒度细化到行级别的
+    #TODO: 当前的所有操作都是单线程的，后续考虑将这些操作做成多线程
+
     parser.add_argument(
         "--lib_name", "-l",
         type=str,

@@ -3,8 +3,6 @@ import re
 import os
 import datetime
 
-from LLM_prompt import *
-
 
 class harness:
     def __init__(self):

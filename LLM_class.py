@@ -4,7 +4,7 @@ import sys
 import json
 
 from LLM_prompt import *
-from operations_of_hanress import harness
+from harness_class import harness
 
 openai.api_key = "sk-il837fQ3G6l21IR1355f785d729c4e10B1A33b4aEa762e62"
 openai.base_url = "https://api.gpt.ge/v1/"
