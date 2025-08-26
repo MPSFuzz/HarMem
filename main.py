@@ -2,7 +2,8 @@ import argparse
 import os
 
 from gen_hanress import get_available_harness
-from utils import FILES_DIR
+from utils import extract_funcname_from_files
+from operations_of_Batch import create_batch
 
 def main():
     parser = argparse.ArgumentParser(description="Generate harnesses for those functions that were modified or added in the given program.")
@@ -49,9 +50,9 @@ def main():
     lib_name = args.lib_name
     source_dir = args.project_path
     dot_file = args.dot_file
-    target_funcs = args.function_name
+    target_funcs = extract_funcname_from_files(args.function_name)
 
-    get_available_harness(lib_name=lib_name, source_dir=source_dir, dot_file=dot_file, target_funcs=target_funcs)
+    create_batch(lib_name=lib_name, source_dir=source_dir, dot_file=dot_file, target_funcs=target_funcs)
 
 if __name__ == "__main__":
     main()
