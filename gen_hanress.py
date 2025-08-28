@@ -38,13 +38,14 @@ def get_target_func_location(func_dir: str, target_func: str) -> list: #获得�
 def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_func: str): #暂定退出循环的条件是获得一个编译成功的harness后退出,返回存储harness的路径
     graph = load_call_graph(dot_file=dot_file)
 
-    llm = LLM(target_func = target_func, target_location = str(locations))
-
     # for target_func in target_funcs:
     locations = get_target_func_location(source_dir, target_func)
     root_apis = get_root_apis(graph=graph, target_func=target_func)
 
-    filtered_entry_apis = llm.entry_api_filter(root_apis=root_apis)
+    llm = LLM(target_func = target_func, target_location = str(locations))
+
+
+    filtered_entry_apis = llm.entry_api_filter(api_list=root_apis)
 
     _global_vars.root_api_and_call_chain = extract_target_call_chain(str(target_func), dot_file, root_nodes=filtered_entry_apis)
     

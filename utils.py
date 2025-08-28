@@ -34,7 +34,7 @@ def clean_up_harness_file():
         if not has_out_file:
             shutil.rmtree(dirpath)
 
-def extract_funcname_from_files(file_path:str) -> list:
+def extract_funcname_from_files(file_path) -> list:
     with open(file_path, "r", encoding="utf-8") as f:
         funcs = [line.strip() for line in f]
 

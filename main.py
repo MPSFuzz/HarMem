@@ -22,7 +22,7 @@ def main():
 
     parser.add_argument(
         "--function-name", "-f",
-        nargs='+',
+        #nargs='+',
         type=str,
         required=True,
         help="The names of the target function to generate a harness for."
@@ -50,7 +50,7 @@ def main():
     lib_name = args.lib_name
     source_dir = args.project_path
     dot_file = args.dot_file
-    target_funcs = extract_funcname_from_files(args.function_name)
+    target_funcs = args.function_name
 
     create_batch(lib_name=lib_name, source_dir=source_dir, dot_file=dot_file, target_funcs=target_funcs)
 

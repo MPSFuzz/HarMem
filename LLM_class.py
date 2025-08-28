@@ -6,7 +6,7 @@ import json
 from LLM_prompt import *
 from harness_class import harness
 
-openai.api_key = "sk-il837fQ3G6l21IR1355f785d729c4e10B1A33b4aEa762e62"
+openai.api_key = "sk-WXtqOuBZPY096KTcDdE866275274464d88943d068aA7Ff5d"
 openai.base_url = "https://api.gpt.ge/v1/"
 openai.default_headers = {"x-foo": "true"}
 
