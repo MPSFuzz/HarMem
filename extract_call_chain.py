@@ -89,7 +89,7 @@ def extract_target_call_chain(graph:nx.DiGraph, target_func, root_apis: list) ->
         if candidate_paths:
             chosen_path = random.choice(candidate_paths)
             chosen_path = get_label_by_Node(graph=graph, node=chosen_path)
-            result[root_api] = chosen_path
+            result[chosen_path[0]] = chosen_path
 
     return result
 

@@ -54,6 +54,8 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
     fix_count = 0
     #random.shuffle(_global_vars.root_api_and_call_chain)
 
+    #TODO: 大模型的延迟报错可能会导致整个流程全部断掉，这里考虑将这个循环的操作做成多线程，防止因为单次请求失败而阻断整个进程
+
     for root_api in _global_vars.root_api_and_call_chain:
         llm.update(lib_name=lib_name, target_func=target_func, call_chain=_global_vars.root_api_and_call_chain[root_api], target_location=str(locations))
         fix_count = 0
@@ -74,7 +76,7 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
             ava_flag = llm.harness_instance.compile_test()
             fix_count += 1
         
-        if ava_flag == False:
+        if ava_flag == True:
             _global_vars.root_api_and_harness[root_api] = None
             print(f"Harness generation failed for root api {root_api} in function {target_func}")
         else:
