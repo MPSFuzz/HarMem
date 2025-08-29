@@ -66,6 +66,7 @@ class LLM:
         )
 
         result = response.choices[0].message.content
+        #print(result)
 
         try:
             content = json.loads(result)
@@ -76,7 +77,7 @@ class LLM:
         return content['filtered_apis']
     
     def generate_code(self) -> dict:
-        code_prompt = CODE_GENERATE_PROMPT % (self.target_func, self.call_chain, self.target_location)
+        code_prompt = CODE_GENERATE_PROMPT % (self.lib_name,self.target_func, self.call_chain, self.target_location)
 
         response = openai.chat.completions.create(
             model = "gpt-4-all",

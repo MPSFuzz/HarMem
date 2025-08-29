@@ -1,8 +1,8 @@
 import networkx as nx
 import matplotlib.pyplot as plt
 import random
-from itertools import product
-from itertools import islice
+from typing import Any
+
 
 def load_call_graph(dot_file):
     try:
@@ -11,7 +11,7 @@ def load_call_graph(dot_file):
     except Exception as e:
         raise SystemExit(f"dot file load fail: {str(e)}")
     
-def get_node_label(graph:nx.DiGraph ,node):
+def get_label_by_Node(graph:nx.DiGraph ,node) -> Any:
     labels = []
 
     for n in node:
@@ -20,6 +20,15 @@ def get_node_label(graph:nx.DiGraph ,node):
             labels.append(label.strip('""').strip('{}'))
     
     return labels
+
+def get_Node_by_label(graph:nx.DiGraph, labels) -> Any:
+    nodes = []
+
+    for node, data in graph.nodes(data=True):
+        if 'label' in data and data['label'].strip('""').strip('{}') in labels:
+            nodes.append(node)
+
+    return nodes
 
 def convert_to_call_chain(graph:nx.DiGraph, node_chain):
     lable_chain = []
@@ -60,20 +69,16 @@ def get_root_apis(graph:nx.DiGraph, target_func) ->list :
                 else:
                     stack.append(predecessor)
     
-    reachable_roots = get_node_label(graph, reachable_root_nodes)
+    reachable_roots = get_label_by_Node(graph, reachable_root_nodes)
 
     print(f"Roots after reverse DFS: {reachable_roots}")
 
     return reachable_roots
 
 
-def extract_target_call_chain(graph:nx.DiGraph, target_func, root_nodes: list) -> dict:
-    target_node = None
-    for node, data in graph.nodes(data=True):
-        print(f"Node: {node}, Data: {data}")
-        if 'label' in data and data['label'].strip('""').strip('{}') == target_func:
-            target_node = node
-            break
+def extract_target_call_chain(graph:nx.DiGraph, target_func, root_apis: list) -> dict:
+    target_node = get_Node_by_label(graph=graph, labels=target_func)
+    root_nodes = get_Node_by_label(graph=graph, labels=root_apis)
 
     result = {}
     for root_api in root_nodes:
@@ -83,7 +88,7 @@ def extract_target_call_chain(graph:nx.DiGraph, target_func, root_nodes: list) -
 
         if candidate_paths:
             chosen_path = random.choice(candidate_paths)
-            chosen_path = get_node_label(graph=graph, )
+            chosen_path = get_label_by_Node(graph=graph, node=chosen_path)
             result[root_api] = chosen_path
 
     return result

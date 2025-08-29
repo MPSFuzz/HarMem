@@ -112,7 +112,7 @@ CODE_GENERATE_PROMPT = """
         When you finish the code generation, please give me the compile command. In the compile command you give, use a.c to refer to the code, and a.out to execution file,\
         and make sure the compile command can compile the code successfully. \
         
-        Your answer needs to be in json format containing two properties: code and compile_command. 
+        Your answer needs to be in json format containing two properties: code and compile_command,and do not return your answer in md format, just normal string.
         """
 
 HARNESS_FIX = """
@@ -134,7 +134,7 @@ HARNESS_FIX = """
         In the compile command you give, use a.c to refer to the code, and a.out to execution file,\
         and make sure the compile command can compile the code successfully. \
         
-        Your answer needs to be in json format containing two properties: code and compile_command. \
+        Your answer needs to be in json format containing two properties: code and compile_command, and do not return your answer in md format, just normal string. \
 """
 
 ENTRY_POINT_FILTER = """
@@ -142,5 +142,5 @@ ENTRY_POINT_FILTER = """
         Here is a list of all root node functions extracted from the tested library CG that may reach the target function : %s. \
         You need to filter these functions to keep only those that may be worth writing harness tests for. \
         
-        Return only a JSON object with the following shape (no extra text): {"filtered_apis": ["funcA", "funcB", ...]}
+        Return only a JSON object with the following shape (no extra text): {"filtered_apis": ["funcA", "funcB", ...]}, and do not return your answer in md format, just normal string. \
 """

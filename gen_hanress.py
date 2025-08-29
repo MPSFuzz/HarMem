@@ -47,12 +47,12 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
 
     filtered_entry_apis = llm.entry_api_filter(api_list=root_apis)
 
-    _global_vars.root_api_and_call_chain = extract_target_call_chain(str(target_func), dot_file, root_nodes=filtered_entry_apis)
+    _global_vars.root_api_and_call_chain = extract_target_call_chain(graph=graph, target_func=target_func, root_apis=filtered_entry_apis)
     
     ava_flag = False
     gen_count = 0
     fix_count = 0
-    random.shuffle(_global_vars.root_api_and_call_chain)
+    #random.shuffle(_global_vars.root_api_and_call_chain)
 
     for root_api in _global_vars.root_api_and_call_chain:
         llm.update(lib_name=lib_name, target_func=target_func, call_chain=_global_vars.root_api_and_call_chain[root_api], target_location=str(locations))
