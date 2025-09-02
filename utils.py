@@ -2,6 +2,8 @@ import os
 import re
 import shutil
 import json
+import logging
+import colorlog
 
 from typing import Any, List, Dict
 from batch_class import Batch
@@ -40,8 +42,42 @@ def extract_funcname_from_files(file_path) -> list:
 
     return funcs
 
-def save_to_json(data:Any, filepath: str = "/temp/"):
-    metadata={metadata.batch_id: metadata.target_func}
+def save_to_json(data:Any, filepath: str = "./temp/"):
+    directory = os.path.dirname(filepath)
+
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    metadata={data.batch_id: data.target_func}
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=4)
 
+def clean_up_global_vars():
+    import _global_vars
+    
+    for key in _global_vars.root_api_and_harness:
+        if _global_vars.root_api_and_harness[key] is None:
+            del _global_vars.root_api_and_harness[key]
+    
+    return
+
+def get_logger(name: str = __name__) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    
+    if not logger.handlers:
+        formatter = colorlog.ColoredFormatter(
+            fmt="%(log_color)s[%(levelname)s]%(reset)s %(cyan)s%(name)s:%(reset)s %(message)s",
+            log_colors={
+                'DEBUG':    'white',
+                'INFO':     'green',
+                'WARNING':  'yellow',
+                'ERROR':    'red',
+                'CRITICAL': 'bold_red',
+            }
+        )
+
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    return logger

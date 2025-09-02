@@ -6,113 +6,26 @@ CODE_GENERATE_PROMPT = """
         These information may be helpful when you generate the fuzz harness. \
         The harness you gernerate should include the libxml2 library and complie successfully. \
         
-        Format requirements : The code should follow the C or C++ code specification, and the program code should be complete and properly formatted.
-        In the code, you should write a long sentence without using line breaks, avoiding the newline character \ n.
-        Try not to use 'printf' in generated code. Don’t make up APIs that don't exist.
+        Format requirements : The code should follow the C or C++ code specification, and the program code should be complete and properly formatted. \
+        In the code, you should write a long sentence without using line breaks, avoiding the newline character \ n. \
+        Do not use any output printing, logging, or debugging functions. Focus only on consuming the fuzz input and triggering the target call chain. \
+        Use a loop such as while (__AFL_LOOP(10000)) to repeatedly call the target function with fuzzed data from stdin, and ensure the loop works even if __AFL_LOOP is undefined. \
+        To support AFLGo directed fuzzing, insert dummy operations or volatile accesses around the target function call to create a unique basic block, 
+            or use a macro such as volatile int afl_target = 0; afl_target++; near the target call to mark it as a target block.
 
-        Here is an example. You can refer to its format. \
-        It is just a sample template and does not need to be strictly followed. \
-        Your core goal is to complete the triggering of the call chain. \
+        Ensure that the fuzz driver executes the target function in a way that exercises its main logic, for example by creating required objects and passing fuzzed data to the target function. \
+        By the way, the fuzz driver you generate will be user by AFL-style fuzzers,so DO NOT use any other special fuzzers' API like "LLVMFuzzerTestOneInput" in the code. \
         
-        #include <stdio.h>
-        #include <stdlib.h>
-
-        /* ===== Abstraction Layer ===== */
-        /* Example placeholder for encoding conversion */
-        char* convert_encoding(const char* input) {
-            // Replace with actual encoding/normalization logic if needed
-            return (char*)input;
-        }
-
-        /* ===== Initialization ===== */
-        void library_init() {
-            // Call the target library’s init function if required
-        }
-
-        /* ===== Resource Container Declaration ===== */
-        typedef struct {
-            void* doc;       // Document or main object
-            void* root;      // Root or primary node
-        } Context;
-
-        /* ===== Main Operations ===== */
-        Context* create_new_context() {
-            Context* ctx = malloc(sizeof(Context));
-            if (!ctx) return NULL;
-
-            // Replace with library-specific allocation / constructor
-            ctx->doc  = /* library_new_document("version") */ NULL;
-            ctx->root = /* library_new_node(convert_encoding("root")) */ NULL;
-
-            // Example of setting root
-            // library_set_root(ctx->doc, ctx->root);
-
-            return ctx;
-        }
-
-        Context* parse_existing_context(const char* filename) {
-            // Replace with actual library parse function
-            Context* ctx = malloc(sizeof(Context));
-            if (!ctx) return NULL;
-
-            ctx->doc = /* library_parse_file(filename) */ NULL;
-            ctx->root = /* library_get_root(ctx->doc) */ NULL;
-            return ctx;
-        }
-
-        void operate_on_context(Context* ctx) {
-            if (!ctx || !ctx->root) return;
-
-            // Example: create child node
-            // library_add_child(ctx->root, convert_encoding("child"), convert_encoding("content"));
-
-            // Example: set attribute
-            // library_set_attribute(ctx->root, convert_encoding("attr"), convert_encoding("value"));
-        }
-
-        void persist_context(Context* ctx, const char* out_file) {
-            if (!ctx || !ctx->doc) return;
-            // Replace with actual save/export function
-            // library_save(ctx->doc, out_file, "UTF-8");
-        }
-
-        /* ===== Cleanup ===== */
-        void cleanup_context(Context* ctx) {
-            if (!ctx) return;
-            if (ctx->doc) {
-                // library_free_document(ctx->doc);
-            }
-            free(ctx);
-        }
-
-        void library_cleanup() {
-            // Call the target library’s global cleanup function if required
-        }
-
-        /* ===== Entry Point ===== */
-        int main() {
-            library_init();
-
-            Context* ctx = create_new_context();
-            // Alternatively: ctx = parse_existing_context("input.file");
-
-            if (ctx) {
-                operate_on_context(ctx);
-                persist_context(ctx, "output.file");
-                cleanup_context(ctx);
-            } else {
-                fprintf(stderr, "Context initialization failed\n");
-            }
-
-            library_cleanup();
-            return EXIT_SUCCESS;
-        }
-
+        Note that the fuzz driver you generate will be used for directional fuzzers such as aflgo, 
+            so you need to pay attention to how external data is passed into the program.\
+        The fuzz driver should read all fuzz input from standard input(stdin) into a memory buffer and pass this buffer to the target function, do not use any hard-coded files. \
 
         When you finish the code generation, please give me the compile command. In the compile command you give, use a.c to refer to the code, and a.out to execution file,\
-        and make sure the compile command can compile the code successfully. \
+            and make sure the compile command can compile the code successfully. \
+        In addition, because this fuzz driver is to use aflgo type fuzzer, the compiler should use clang after afl packaging. \
         
-        Your answer needs to be in json format containing two properties: code and compile_command,and do not return your answer in md format, just normal string.
+        Your answer needs to be in json format containing two properties: code and compile_command.\
+        DO NOT return your answer in markdown format, just normal string. \
         """
 
 HARNESS_FIX = """
@@ -134,7 +47,8 @@ HARNESS_FIX = """
         In the compile command you give, use a.c to refer to the code, and a.out to execution file,\
         and make sure the compile command can compile the code successfully. \
         
-        Your answer needs to be in json format containing two properties: code and compile_command, and do not return your answer in md format, just normal string. \
+        Your answer needs to be in json format containing two properties: code and compile_command.\
+        DO NOT return your answer in markdown format, just normal string. \
 """
 
 ENTRY_POINT_FILTER = """
@@ -142,5 +56,6 @@ ENTRY_POINT_FILTER = """
         Here is a list of all root node functions extracted from the tested library CG that may reach the target function : %s. \
         You need to filter these functions to keep only those that may be worth writing harness tests for. \
         
-        Return only a JSON object with the following shape (no extra text): {"filtered_apis": ["funcA", "funcB", ...]}, and do not return your answer in md format, just normal string. \
+        Return only a JSON object with the following shape (no extra text): {"filtered_apis": ["funcA", "funcB", ...]}.\
+        DO NOT return your answer in markdown format, just normal string.\
 """

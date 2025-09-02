@@ -3,6 +3,9 @@ import re
 import os
 import datetime
 
+from utils import get_logger
+
+logger = get_logger(__name__)
 
 class harness:
     def __init__(self):
@@ -31,7 +34,12 @@ class harness:
                     f.write(self.code)
                 self.code_file = filename
             except Exception as e:
-                print(f"Error saving code to file: {e}")
+                logger.error(f"Error saving code to file: {e}")
+    
+    def update_code_file(self):
+        with open(self.code_file, "w", encoding="utf-8") as f:
+            f.write(self.code)
+        return
     
     def complete_compile_command(self):
         filename, _ = os.path.splitext(self.code_file)
@@ -50,7 +58,7 @@ class harness:
                 text = True,
                 check = True,
                 shell=True)
-            print("Compilation succeeded with output \n")
+            logger.info("Compilation succeeded with output \n")
             return True
         except subprocess.CalledProcessError as e: #前面的subprocess中的check可以直接用于gcc编译的执行结果判断，如果执行失败了会抛出一个subprocess.CalledProcessError 异常
             print(f"Compilation failed with error:\n{e.stderr}")
