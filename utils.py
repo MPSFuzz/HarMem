@@ -12,6 +12,28 @@ FILES_DIR = {
     "DOT_FILE_DIR": "./bc_dot_files/"
 }
 
+def get_logger(name: str = __name__) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    
+    if not logger.handlers:
+        formatter = colorlog.ColoredFormatter(
+            fmt="%(log_color)s[%(levelname)s]%(reset)s %(cyan)s%(name)s:%(reset)s %(message)s",
+            log_colors={
+                'DEBUG':    'white',
+                'INFO':     'green',
+                'WARNING':  'yellow',
+                'ERROR':    'red',
+                'CRITICAL': 'bold_red',
+            }
+        )
+
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    return logger
+
 def standarize_path(path: str) -> str:
     while path.startswith('/'):
         path = path[1:]
@@ -60,24 +82,17 @@ def clean_up_global_vars():
     
     return
 
-def get_logger(name: str = __name__) -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
-    
-    if not logger.handlers:
-        formatter = colorlog.ColoredFormatter(
-            fmt="%(log_color)s[%(levelname)s]%(reset)s %(cyan)s%(name)s:%(reset)s %(message)s",
-            log_colors={
-                'DEBUG':    'white',
-                'INFO':     'green',
-                'WARNING':  'yellow',
-                'ERROR':    'red',
-                'CRITICAL': 'bold_red',
-            }
-        )
+def clean_markdown_format(text: str):
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```", "", text)
+    return text.strip()
 
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    return logger
+def extract_json_from_text(text: str):
+    try:
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            return json_str
+    except Exception as e:
+        logger = get_logger("DEBUG")
+        logger.error(f"Error extracting JSON from text: {e}")

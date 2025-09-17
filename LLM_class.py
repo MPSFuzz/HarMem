@@ -4,7 +4,7 @@ import sys
 import json
 import time
 
-from utils import get_logger
+from utils import get_logger, clean_markdown_format, extract_json_from_text
 from LLM_prompt import *
 from harness_class import harness
 
@@ -14,8 +14,6 @@ openai.default_headers = {"x-foo": "true"}
 
 logger = get_logger(__name__)
 
-#TODO: 当前的harness_fix函数只考虑了修复编译命令造成的错误，应该还要包含修复harness中本身编写造成的错误
-
 class LLM:
     def __init__(self, lib_name=None, target_func=None, target_location=None,max_retries=3, retry_delay=5, timeout=60):
         self.lib_name = lib_name
@@ -24,7 +22,7 @@ class LLM:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.timeout = timeout
-
+        
     def entry_api_filter(self, api_list) -> list:
         api_filter_prompt = ENTRY_POINT_FILTER % (self.target_func, self.lib_name, api_list)
 
@@ -61,7 +59,8 @@ class LLM:
                     timeout=self.timeout
                 )
 
-                result = response.choices[0].message.content
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
                 #print(result)
                 content = json.loads(result)
                 return content['filtered_apis']
@@ -116,7 +115,8 @@ class LLM:
                     timeout=self.timeout
                 )
 
-                result = response.choices[0].message.content
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
 
                 content = json.loads(result)
 
@@ -171,7 +171,8 @@ class LLM:
                     timeout=self.timeout
                 )
 
-                result = response.choices[0].message.content
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
 
                 try:
                     content = json.loads(result)

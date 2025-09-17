@@ -1,6 +1,7 @@
 import subprocess
 import re
 import os
+import shlex
 import datetime
 
 from utils import get_logger
@@ -15,7 +16,32 @@ class harness:
         self.compile_result = None
         self.save_folder = "./harness/"
         self.target_func = None
+        self._shell_env_cache = None
     
+    def _get_interactive_shell_path(self) -> dict:
+        try:
+            output=subprocess.check_output(['bash', '-lc', 'env'], text=True, timeout=5)
+            env_vars = {}
+            for line in output.strip().split('\n'):
+                if '=' in line:
+                    k, v = line.split('=', 1)
+                    env_vars[k] = v
+            return env_vars
+    
+        except:
+            logger.error("Failed to get interactive shell environment variables.")
+            return {}
+    
+    def _get_env_var(self):
+        if self._shell_env_cache is None:
+            shell_env = self._get_interactive_shell_path()
+            env = os.environ.copy()
+            if shell_env:
+                env.update(shell_env)
+            self._shell_env_cache = env
+        
+        return self._shell_env_cache
+
     def save_code_to_file(self):
         if not os.path.exists(self.save_folder):
             os.makedirs(self.save_folder)
@@ -40,7 +66,7 @@ class harness:
         with open(self.code_file, "w", encoding="utf-8") as f:
             f.write(self.code)
         return
-    
+
     def complete_compile_command(self):
         filename, _ = os.path.splitext(self.code_file)
         compile_command_template = self.compile_command
@@ -50,18 +76,22 @@ class harness:
         self.compile_command = compile_command_modified
 
     def compile_test(self) -> bool:
+        env = self._get_env_var()
+        
         try:
             self.compile_result = subprocess.run(
-                self.compile_command,
+                ["bash", "-lc", self.compile_command],
                 stdout = subprocess.PIPE,
                 stderr = subprocess.PIPE,
                 text = True,
                 check = True,
-                shell=True)
+                env=env,
+                timeout=60
+                )
             logger.info("Compilation succeeded with output \n")
             return True
         except subprocess.CalledProcessError as e: #前面的subprocess中的check可以直接用于gcc编译的执行结果判断，如果执行失败了会抛出一个subprocess.CalledProcessError 异常
-            print(f"Compilation failed with error:\n{e.stderr}")
+            logger.error(f"Compilation failed with error:\n{e.stderr}")
             self.compile_result = e.stderr 
             return False
     
