@@ -1,5 +1,11 @@
 __pycache__/
 .vscode/
 harness/
+harness1/
+harness_skeletons/
 batch_metadata/
 temp/
+complie_commands_files/
+.clangd
+aflgo/
+*.bak
