@@ -8,8 +8,6 @@ from src.utils.libclang_load import load_libclang
 #load_libclang()
 cindex.Config.set_library_file('/opt/llvm21/lib/libclang.so.21.1.0')  # Adjust path as necessary
 
-#TODO： 处理一下标志获取不完整的问题
-
 @dataclass
 class BitmaskValue:
     name: str

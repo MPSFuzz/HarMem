@@ -3,10 +3,13 @@ import os
 import json
 import time
 from typing import Dict, Any
+from pathlib import Path
 
 from src.utils.utils import get_logger, clean_markdown_format, extract_json_from_text, get_path_subfolder
 from .LLM_prompt import *
 from ..harness_class.harness_class import harness
+
+#TODO: 添加一个从LLM获得字典的接口
 
 openai.api_key = "sk-WXtqOuBZPY096KTcDdE866275274464d88943d068aA7Ff5d"
 #openai.base_url = "https://api.gpt.ge/v1/"
@@ -24,8 +27,10 @@ class LLM:
         self.retry_delay = retry_delay
         self.timeout = timeout
     
-    def get_phase_A_context_and_harness_plan(self, phase_A_context: Dict[str, Any],plan: dict):
+    def get_phase_A_context(self, phase_A_context: Dict[str, Any]):
         self.phase_A_context = phase_A_context
+    
+    def get_harness_plan(self, plan: dict):
         self.plan = plan
         
     def entry_api_filter(self, api_list) -> list:
@@ -272,8 +277,7 @@ class LLM:
                 try:
                     content = json.loads(result)
                 except json.JSONDecodeError as e:
-                    print(f"error:{e}")
-                    print(result)
+                    logger.error(f"JSON decode error during harness_fix: {e}")
 
                 h.code = content['code']
                 h.compile_command = content['compile_command']
@@ -288,4 +292,188 @@ class LLM:
                     logger.error(f"[Error] harness_fix failed after {self.max_retries} attempts")
                     return h
 
+    def generate_dict(self, h: harness, call_chain, min_weight: int = 3):
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                plan_json = json.dumps(self.plan, indent=2)
+                harness_code = h.code
 
+                dict_prompt = DICT_GENERATE_PROMPT % (
+                    self.lib_name,
+                    self.target_func,
+                    plan_json,
+                    harness_code,
+                    self.target_func,
+                )
+
+                response = openai.chat.completions.create(
+                    model="gpt-5-chat-latest",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": dict_prompt,
+                                }
+                            ],
+                        }
+                    ],
+                    response_format={
+                        "type": "json_object",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "tokens": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "value": {"type": "string"},
+                                            "kind": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "keyword",
+                                                    "attr_name",
+                                                    "attr_value",
+                                                    "url",
+                                                    "flag",
+                                                    "other",
+                                                ],
+                                            },
+                                            "weight_hint": {
+                                                "type": "integer",
+                                                "minimum": 1,
+                                                "maximum": 5,
+                                            },
+                                            "note": {"type": "string"},
+                                        },
+                                        "required": ["value"],
+                                        "additionalProperties": True,
+                                    },
+                                }
+                            },
+                            "required": ["tokens"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    temperature=0.3,
+                    max_tokens=2000,
+                    top_p=1,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    timeout=self.timeout,
+                )
+
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
+
+                try:
+                    content = json.loads(result)
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON decode error during generate_dict: {e}")
+                
+                tokens = content.get("tokens", [])
+
+                cleaned_tokens = []
+                seen = set()
+                for token in tokens:
+                    v = (token.get("value") or "").strip()
+                    if not v:
+                        continue
+                    w = token.get("weight_hint", min_weight)
+                    try:
+                        w = int(w)
+                    except Exception:
+                        w = min_weight
+                    if w < min_weight:
+                        continue
+
+                    if v in seen:
+                        continue
+                    seen.add(v)
+                    cleaned_tokens.append(v)
+                
+                if not cleaned_tokens:
+                    logger.warning(f"[Warning] No valid tokens generated for call_chain {call_chain}")
+                
+                p = Path(h.code_file)
+                p = str(p.parent)
+                dict_save_file = os.path.join(p, "harness_dict.dict")
+                with open(dict_save_file, "w", encoding="utf-8") as f:
+                    for v in cleaned_tokens:
+                        f.write(json.dumps(v))
+                        f.write("\n")
+                
+                logger.info(f"Saved harness dictionary to {dict_save_file}")
+                
+            except Exception as e:
+                logger.warning(f"[Warning] generate_dict attempt {attempt} failed: {e}")
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error(f"[Error] generate_dict failed after {self.max_retries} attempts")
+                    return None
+    
+    def phased_harness_upgrade_1(self, plan_path: str, fuzzer_stats: Dict[str, Any], analysis_result: Dict[str, Any], h: harness):
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                with open(plan_path, "r", encoding="utf-8") as f:
+                    plan = json.load(f)
+                code = h.code
+                upgrade_prompt = PHASED_FEEDBACK_IMPROVE_PROMPT % (
+                    json.dumps(plan, indent=2),
+                    code,
+                    json.dumps(fuzzer_stats, indent=2),
+                    json.dumps(analysis_result, indent=2),
+                )
+                response = openai.chat.completions.create(
+                    # model = "gpt-4o-all",
+                    model = "gpt-5-chat-latest",
+                    #model = "gpt-5-2025-08-07",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text",
+                            "text": f"{upgrade_prompt}",}
+                            ]
+                    }],
+                response_format={
+                    "type": "json_object",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                            },
+                            "compile_command": {
+                                "type": "string",
+                            },
+                        },
+                        "required": ["code", "compile_command"],
+                        "additionalProperties": False
+                    }
+                },
+                    temperature=0.4,
+                    max_tokens=5000,
+                    top_p=1,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    timeout=self.timeout
+                )
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
+
+                content = json.loads(result)
+
+                h.code = content['code']
+                h.compile_command = content['compile_command']
+
+                return
+
+            except Exception as e:
+                logger.warning(f"[Warning] generate_dict attempt {attempt} failed: {e}")
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error(f"[Error] Failed to generate upgrade prompt: {e}")

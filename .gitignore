@@ -3,6 +3,7 @@ __pycache__/
 harness/
 harness1/
 harness_skeletons/
+harness_plans/
 batch_metadata/
 temp/
 complie_commands_files/

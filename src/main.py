@@ -1,9 +1,18 @@
 import argparse
 import os
 
+from typing import Dict, Any, Optional, List
+
 from src.harness_class.gen_hanress import get_available_harness
 from src.utils.utils import extract_funcname_from_files
-from src.batch.operations_of_Batch import create_batch
+from src.batch.operations_of_Batch import create_batch, collect_fuzzer_feedback_to_batch, analyze_fuzzer_feedback
+from src.batch.batch_class import Batch
+from src.fuzz_components.fuzz_runner import start_fuzzing
+from src.fuzz_components.fuzzer_feed_back_analysis import is_harness_qualified_in_coares_grain
+from src.harness_class.harness_upgrade import harness_upgrade_procedure
+from src.utils.utils import get_logger
+
+logger = get_logger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Generate harnesses for those functions that were modified or added in the given program.")
@@ -59,7 +68,31 @@ def main():
     target_funcs = args.function_name
     compile_commands_path = args.compile_commands_path
 
-    create_batch(lib_name=lib_name, source_dir=source_dir, dot_file=dot_file, target_funcs=target_funcs, compile_commands_path=compile_commands_path)
+    # create batch (harness skeletons generation + harness plans generation + harness code generation)
+    batch_id = create_batch(lib_name=lib_name, source_dir=source_dir, dot_file=dot_file, target_funcs=target_funcs, compile_commands_path=compile_commands_path)
+    
+    #start fuzzing, use Batch class to manage the fuzzing processes
+    batch: Batch = start_fuzzing(batch_id)
+    logger.info(f"Started fuzzing processes with PIDs: {batch.fuzzer_pids}")
+
+    # TODO: design a scheduler to monitor the fuzzing processes and decide when to upgrade the harnesses after frame progress is ready
+    # collect fuzzer feedback and store them in the Batch instance
+    collect_fuzzer_feedback_to_batch(batch)
+
+    # analyze fuzzer feedback and store analysis results in the Batch instance
+    analyze_fuzzer_feedback(batch)
+
+    # check if there is any harness need to be upgraded in coarse grain
+    for root_api, analysis_result in batch.fuzz_feedback.get("fuzzer_stats_analysis", {}).items():
+        need_to_upgrade = is_harness_qualified_in_coares_grain(analysis_result)
+        if need_to_upgrade:
+            continue
+
+        logger.info(f"Try to upgrade the harness for root API {root_api} in batch {batch.batch_id}")
+        if not harness_upgrade_procedure(batch, root_api):
+            continue
+
+
 
 if __name__ == "__main__":
     main()

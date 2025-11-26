@@ -190,7 +190,9 @@ cfg_calculation(graph_t &G, std::ifstream &targets_stream,
     std::vector<std::string> splits;
     bo::algorithm::split(splits, line, bo::is_any_of(","));
     ;
-    assert(splits.size() == 2);
+    // assert(splits.size() == 2);
+    if (splits.size() != 2)
+      continue;
     if (not find_nodes(G, splits[0]).empty()) {
       if (cg_distance.find(splits[1]) != cg_distance.end()) {
         if (bb_distance.find(splits[0]) != bb_distance.end()) {

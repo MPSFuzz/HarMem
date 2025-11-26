@@ -46,10 +46,15 @@ def get_target_func_location(func_dir: str, target_func: str) -> list: #获得�
 def _process_root_api(root_api, llm: LLM, call_chain, max_fix = 3):
     plan = _global_vars.target_func_plan[root_api]
     phase_A_context = build_phase_A_context(plan)
-    llm.get_phase_A_context_and_harness_plan(phase_A_context, plan)
+    llm.get_phase_A_context(phase_A_context)
+    llm.get_harness_plan(plan)
     h = llm.generate_harness_skeleton(call_chain)
+
+    _global_vars.harness_skeletons_files[root_api] = h.skeleton_path
     
     llm.generate_code(h, call_chain)
+    # _global_vars.fuzz_commands[root_api] = h.start_fuzzing_command
+
     fix_count = 0
 
     if h is None:
@@ -58,14 +63,16 @@ def _process_root_api(root_api, llm: LLM, call_chain, max_fix = 3):
     
     ava_flag = h.compile_test()
     while ava_flag == False and fix_count < max_fix:
-        h = llm.harness_fix(h)
+        llm.harness_fix(h)
         h.complete_compile_command()
         h.update_code_file()
-        ava_flag = h.compile_test() #TODO: 调整aflgo-clang
+        ava_flag = h.compile_test()
         fix_count += 1
 
     if ava_flag == True:
         logger.info(f"Harness generation sunccess for root api {root_api} in function {llm.target_func}")
+        llm.generate_dict(h, call_chain)
+        
         return root_api, h.code_file
     else:
         logger.warning(f"Harness generation failed for root api {root_api} in function {llm.target_func}")
@@ -105,7 +112,7 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
         #     for root_api, call_chain in _global_vars.root_api_and_call_chain.items()
         # ]
 
-        # [quick test] >>>
+        # [quick test] TODO: disable this block after test >>>
         futures = [
             executor.submit(_task, root_api, call_chain, compile_commands_path)
             for root_api, call_chain in test_set.items()
@@ -117,17 +124,10 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
             if harness_plan is not None:
                 _global_vars.target_func_plan[root_api] = harness_plan
 
-    # [save the plans for debug] >>>
-    plan_save_path = get_path_in("temp", f"{target_func}_plans.json")
+    plan_save_path = get_path_in("harness_plans", f"{target_func}_plans.json")
     with open(plan_save_path, "w", encoding="utf-8") as f:
         json.dump(_global_vars.target_func_plan, f, indent=4)
     logger.info(f"Saved harness plans to {plan_save_path}")
-
-    call_chains_save_path = get_path_in("temp", f"{target_func}_call_chains.json")
-    with open(call_chains_save_path, "w", encoding="utf-8") as f:
-        json.dump(_global_vars.root_api_and_call_chain, f, indent=4)
-    logger.info(f"Saved call chains to {call_chains_save_path}")
-    # <<<
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = []

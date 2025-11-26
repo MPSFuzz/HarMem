@@ -13,7 +13,7 @@ from argparse import ArgumentTypeError as ArgTypeErr
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-TARGET = Path("/root/temp/lrzip-CVE-2017-8846/obj-aflgo/temp/dot-files/cfg.fill_buffer.dot")
+# TARGET = Path("/root/temp/lrzip-CVE-2017-8846/obj-aflgo/temp/dot-files/cfg.fill_buffer.dot")
 
 STEP = 0
 STATE_FN = "state-fast"
@@ -22,7 +22,6 @@ CALLGRAPH_NAME = "callgraph.dot"
 PROJ_ROOT = Path(__file__).resolve().parent.parent
 DIST_BIN = PROJ_ROOT / "gen_distance/distance_calculator/distance.bin"
 DIST_PY  = PROJ_ROOT / "gen_distance/distance_calculator/distance.py"
-
 
 def next_step(args):
     global STEP

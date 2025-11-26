@@ -9,14 +9,16 @@ from src.utils.utils import get_logger, get_path_subfolder
 logger = get_logger(__name__)
 
 class harness:
-    def __init__(self):
-        self.code = None
-        self.code_file = None
+    def __init__(self, code: str=None, target_func: str=None, 
+                 code_file: str=None, code_save_folder: str=get_path_subfolder("harness"), 
+                 skeleton_path: str=None):
+        self.code = code
+        self.code_file = code_file
         self.compile_command = None
         self.compile_result = None
-        self.code_save_folder = get_path_subfolder("harness")
-        self.target_func = None
-        self.skeleton_path = None
+        self.code_save_folder = code_save_folder
+        self.target_func = target_func
+        self.skeleton_path = skeleton_path
         self._shell_env_cache = None
     
     def _get_interactive_shell_path(self) -> dict:

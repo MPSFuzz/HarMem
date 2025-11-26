@@ -5,6 +5,7 @@ import json
 import logging
 import colorlog
 
+from pathlib import Path
 from typing import Any, List, Dict
 #from ..batch.batch_class import Batch
 
@@ -112,3 +113,6 @@ def get_path_in_src(subfolder: str, filename: str) -> str:
     os.makedirs(dir_path, exist_ok=True)
     return os.path.join(dir_path, filename)
 
+def get_parent_dir(path: str) -> str:
+    p = Path(path)
+    return str(p.parent)
