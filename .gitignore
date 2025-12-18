@@ -1,5 +1,6 @@
 __pycache__/
 .vscode/
+.VSCodeCounter/
 harness/
 harness1/
 harness_skeletons/
@@ -7,6 +8,7 @@ harness_plans/
 batch_metadata/
 temp/
 complie_commands_files/
+filtered_trace_metadata/
 .clangd
 aflgo/
 *.bak

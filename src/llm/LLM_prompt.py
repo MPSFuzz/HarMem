@@ -246,6 +246,7 @@ CODE_GENERATE_PROMPT = """
             while still allowing fuzz input to influence buffers, lengths, and sometimes options.
 
         6. Fuzz input influence:
+        - Place operations like fopen outside the __AFL_LOOP loop, not inside it, to avoid slowing down the process.
         - Ensure that fuzz input (the buffer read from argv[1] and its size) meaningfully influences:
             * the data parsed into the library (e.g., XML/JSON/text),
             * or configuration / options where appropriate.

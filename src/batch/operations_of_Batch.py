@@ -2,11 +2,11 @@ import os
 
 from src.utils import _global_vars
 from src.utils.utils import extract_funcname_from_files, save_to_json, get_path_in, get_parent_dir, get_logger
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from src.batch.batch_class import Batch
 from src.harness_class.gen_hanress import get_available_harness
 from src.fuzz_components.fuzz_feedback_parser import parse_fuzzer_stats_file
-from src.fuzz_components.fuzzer_feed_back_analysis import fuzzer_stats_analysis
+from src.fuzz_components.fuzzer_feed_back_analysis import fuzzer_stats_analysis, FuzzStatsWindowManager
 
 logger = get_logger(__name__)
 
@@ -55,9 +55,9 @@ def collect_fuzzer_feedback_to_batch(batch: Batch):
     
     batch.save_metadata()
 
-def analyze_fuzzer_feedback(batch: Batch):
+def analyze_fuzzer_feedback(batch: Batch, window_mgr: Optional[FuzzStatsWindowManager] = None):
     for root_api, feedback in batch.fuzz_feedback.get("fuzzer_stats_feedback", {}).items():
-        analysis_result = fuzzer_stats_analysis(feedback)
+        analysis_result = fuzzer_stats_analysis(feedback, root_api, window_mgr)
         if "fuzzer_stats_analysis" not in batch.fuzz_feedback:
             batch.fuzz_feedback["fuzzer_stats_analysis"] = {}
 

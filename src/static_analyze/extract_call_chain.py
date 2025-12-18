@@ -44,15 +44,13 @@ def convert_to_call_chain(graph:nx.DiGraph, node_chain):
 def get_root_apis(graph:nx.DiGraph, target_func) ->list : 
     target_node = None
     for node, data in graph.nodes(data=True):
-        print(f"Node: {node}, Data: {data}")
+        #print(f"Node: {node}, Data: {data}")
         if 'label' in data and data['label'].strip('""').strip('{}') == target_func:
             target_node = node
             break  # 假设只有一个节点的标签是 "inverted_tree"
 
     if target_node is None:
         raise ValueError(f"Function with label '{target_func}' does not exist in the graph")
-    
-    print(target_node)
 
     reachable_root_nodes = set()
     stack =  [target_node]
@@ -71,7 +69,7 @@ def get_root_apis(graph:nx.DiGraph, target_func) ->list :
     
     reachable_roots = get_label_by_Node(graph, reachable_root_nodes)
 
-    print(f"Roots after reverse DFS: {reachable_roots}")
+    #print(f"Roots after reverse DFS: {reachable_roots}")
 
     return reachable_roots
 

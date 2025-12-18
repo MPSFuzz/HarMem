@@ -1,6 +1,7 @@
 import random
 import subprocess
 import os
+import time
 import multiprocessing
 import concurrent.futures
 
@@ -79,8 +80,12 @@ def _process_root_api(root_api, llm: LLM, call_chain, max_fix = 3):
         return root_api, None
     
 def _task(root_api, call_chain, compile_commands_path):
+    pid = os.getpid()
+    t0 = time.time()
+    logger.debug(f"[task start] pid={pid} root={root_api} chain_len={len(call_chain)}")
     try:
         harness_plan = aggregate_for_chain(call_chain, compile_commands_path)
+        logger.debug(f"[task end] pid={pid} root={root_api} cost={time.time()-t0:.1f}s")
         return root_api, harness_plan
     except Exception as e:
         logger.error(f"Error aggregating call chain for root api {root_api}: {e}")
@@ -106,7 +111,7 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
     cpu_counts = multiprocessing.cpu_count()
     logger.debug(f"CPU counts: {cpu_counts}")
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=10) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers = min(cpu_counts, len(test_set))) as executor:
         # futures = [
         #     executor.submit(task, root_api, call_chain, compile_commands_path)
         #     for root_api, call_chain in _global_vars.root_api_and_call_chain.items()
@@ -120,7 +125,12 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
         # <<<
 
         for future in concurrent.futures.as_completed(futures):
-            root_api, harness_plan = future.result()
+            try:
+                root_api, harness_plan = future.result()
+            except Exception as e:
+                logger.exception(f"static task failed: {e}")
+                continue
+
             if harness_plan is not None:
                 _global_vars.target_func_plan[root_api] = harness_plan
 
@@ -130,9 +140,16 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
     logger.info(f"Saved harness plans to {plan_save_path}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = []
-        for root_api, call_chain in _global_vars.root_api_and_call_chain.items():
-            futures.append(executor.submit(_process_root_api, root_api, llm, call_chain))
+        # [quick test] TODO: disable this block after test >>>
+        futures = [
+            executor.submit(_process_root_api, root_api, llm, call_chain)
+            for root_api, call_chain in test_set.items()
+        ]
+        # <<<
+
+        # futures = []
+        # for root_api, call_chain in _global_vars.root_api_and_call_chain.items():
+        #     futures.append(executor.submit(_process_root_api, root_api, llm, call_chain))
 
         for future in concurrent.futures.as_completed(futures):
             root_api, harness_file = future.result()

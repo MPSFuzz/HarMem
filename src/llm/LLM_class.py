@@ -2,12 +2,12 @@ import openai
 import os
 import json
 import time
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pathlib import Path
 
 from src.utils.utils import get_logger, clean_markdown_format, extract_json_from_text, get_path_subfolder
-from .LLM_prompt import *
-from ..harness_class.harness_class import harness
+from src.llm.LLM_prompt import *
+from src.harness_class.harness_class import harness, seed_for_harness
 
 #TODO: 添加一个从LLM获得字典的接口
 
@@ -39,7 +39,8 @@ class LLM:
         for attempt in range(1, self.max_retries + 1):
             try:
                 response = openai.chat.completions.create(
-                    model= "gpt-4o-all",
+                    #model= "gpt-4o-all",
+                    model= "gpt-5.2",
                     messages=[{
                         "role": "user",
                         "content": [
@@ -93,7 +94,8 @@ class LLM:
                 harness_skeleton_prompt = SKELETON_GENERATE_PROMPT % (self.lib_name, json.dumps(self.phase_A_context, indent=2))
                 response = openai.chat.completions.create(
                     #model = "gpt-4o-all",
-                     model = "gpt-5-chat-latest",
+                    #model = "gpt-5-chat-latest",
+                    model= "gpt-5.2",
                     # model = "gpt-5-2025-08-07",
                     messages=[{
                         "role": "user",
@@ -176,7 +178,8 @@ class LLM:
                 code_prompt = CODE_GENERATE_PROMPT % (self.lib_name, self.target_func, json.dumps(self.plan, indent=2), skeleton, self.target_func)
                 response = openai.chat.completions.create(
                     # model = "gpt-4o-all",
-                    model = "gpt-5-chat-latest",
+                    #model = "gpt-5-chat-latest",
+                    model= "gpt-5.2",
                     #model = "gpt-5-2025-08-07",
                     messages=[{
                         "role": "user",
@@ -242,7 +245,8 @@ class LLM:
                 response = openai.chat.completions.create(
                     # model = "gpt-4o-all",
                     # model = "gpt-5-chat-latest",
-                    model = "gpt-5-2025-08-07",
+                    model= "gpt-5.2",
+                    #model = "gpt-5-2025-08-07",
                     messages=[{
                         "role": "user",
                         "content": [
@@ -307,7 +311,8 @@ class LLM:
                 )
 
                 response = openai.chat.completions.create(
-                    model="gpt-5-chat-latest",
+                    #model="gpt-5-chat-latest",
+                    model= "gpt-5.2",
                     messages=[
                         {
                             "role": "user",
@@ -406,6 +411,7 @@ class LLM:
                         f.write("\n")
                 
                 logger.info(f"Saved harness dictionary to {dict_save_file}")
+                return
                 
             except Exception as e:
                 logger.warning(f"[Warning] generate_dict attempt {attempt} failed: {e}")
@@ -429,7 +435,8 @@ class LLM:
                 )
                 response = openai.chat.completions.create(
                     # model = "gpt-4o-all",
-                    model = "gpt-5-chat-latest",
+                    #model = "gpt-5-chat-latest",
+                    model= "gpt-5.2",
                     #model = "gpt-5-2025-08-07",
                     messages=[{
                         "role": "user",
@@ -477,3 +484,80 @@ class LLM:
                     time.sleep(self.retry_delay)
                 else:
                     logger.error(f"[Error] Failed to generate upgrade prompt: {e}")
+    
+    def phased_harness_upgrade_2(self, h: harness, prompt: str):       # this part is for distance plateau
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = openai.chat.completions.create(
+                    model= "gpt-5.2",
+                    #model = "gpt-5-chat-latest",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text",
+                            "text": f"{prompt}",}
+                            ]
+                    }],
+                    response_format={
+                        "type": "json_object",
+                    },
+                    temperature=0.4,
+                    max_tokens=5000,
+                    top_p=1,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    timeout=self.timeout
+                )
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
+
+                content = json.loads(result)
+
+                if "seed1" in content and "harness" not in content:
+                    seeds: List[seed_for_harness] = []
+                    seed_save_path = Path(h.code_save_folder) / "in"
+                    logger.info("[LLM] LLM suggests modifying the seed instead of the harness.")
+                    
+                    for key, value in content.items():
+                        s = seed_for_harness(
+                            seed_content = value,
+                            seed_save_path = seed_save_path / f"{key}_from_llm"
+                        )
+                        
+                        seeds.append(s)
+
+                    return "only_modified_seeds", seeds
+                
+                elif "harness" in content and "seed1" not in content:
+                    logger.info("[LLM] LLM suggests modifying the harness code.")
+                    h.code = content['code']
+                    h.compile_command = content['compile_command']
+
+                    return "only_modified_harness", None
+                
+                elif "seed1" in content and "harness" in content:
+                    logger.info("[LLM] LLM suggests modifying both the seed and the harness code.")
+                    h.code = content['code']
+                    h.compile_command = content['compile_command']
+
+                    seeds: List[seed_for_harness] = []
+                    seed_save_path = Path(h.code_save_folder) / "in"
+                    
+                    for key, value in content.items():
+                        if key.startswith("seed"):
+                            s = seed_for_harness(
+                                seed_content = value,
+                                seed_save_path = seed_save_path / f"{key}_from_llm"
+                            )
+                            
+                            seeds.append(s)
+
+                    return "modified_seeds_and_harness", seeds
+
+            except Exception as e:
+                logger.warning(f"[Warning] phased_harness_upgrade_2 attempt {attempt} failed: {e}")
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error(f"[Error] phased_harness_upgrade_2 failed after {self.max_retries} attempts")
+                    return None

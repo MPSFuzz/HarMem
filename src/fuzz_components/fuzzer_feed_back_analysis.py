@@ -1,13 +1,122 @@
-import json
-import os
-
-from typing import Dict, Any, List
+import time
+from dataclasses import dataclass, field
+from collections import deque
+from typing import Dict, Any, List, Optional, Deque, Tuple
 
 def _safe_get(stat: Dict[str, Any], key: str,default: None):
     v = stat.get(key, default)
     return v if v is not None else default
 
-def fuzzer_stats_analysis(fuzzer_stats: Dict[str, Any]) -> Dict[str, Any]:
+def _safe_num(stat: Dict[str, Any], key: str, default=0):
+    v = stat.get(key, default)
+    if v is None:
+        return default
+    return v
+
+# plateau detection based on time windows
+@dataclass
+class PlateauConfig:
+    window_seconds: int = 20 * 60          # 20 min
+    require_points: int = 5                # at least 5 data points in the window
+    min_paths_delta: int = 20              # Δpaths_total < 20
+    min_bitmap_delta: float = 0.2          # Δbitmap_cvg < 0.2 (%)
+    min_distance_improve_ratio: float = 0.01  # min_distance  < 1% improvement in the window considered as plateau
+    min_execs_imporve: int = 5000
+
+@dataclass
+class StatsPoint:
+    ts: float
+    stats: Dict[str, Any]
+
+@dataclass
+class FuzzStatsWindow:
+    cfg: PlateauConfig
+    points: Deque[StatsPoint] = field(default_factory=lambda: deque(maxlen=2000))
+
+    def push(self, stats: Dict[str, Any], ts: Optional[float] = None) -> None:
+        ts = ts if ts is not None else time.time()
+        self.points.append(StatsPoint(ts=ts, stats=stats))
+        self._trim(ts)
+    
+    def _trim(self, now: float) -> None:
+        # only keep points within the time window
+        while self.points and (now - self.points[0].ts) > self.cfg.window_seconds:
+            self.points.popleft()
+    
+    def plateau(self) -> Tuple[bool, Dict[str, Any]]:
+        if len(self.points) < self.cfg.require_points:
+            return False, {"reason": "insufficient_points", "points": len(self.points)}
+        
+        oldest = self.points[0].stats
+        newest = self.points[-1].stats
+
+        path_delta = int(_safe_num(newest, "paths_total", 0) or 0) - int(_safe_num(oldest, "paths_total", 0) or 0)
+        bitmap_delta = float(_safe_num(newest, "bitmap_cvg", 0.0) or 0.0) - float(_safe_num(oldest, "bitmap_cvg", 0.0) or 0.0)
+        exec_delta = int(_safe_num(newest, "execs_done", 0) or 0) - int(_safe_num(oldest, "execs_done", 0) or 0)
+
+        if exec_delta < self.cfg.min_execs_imporve:
+            return False, {
+                "reason": "inactive_window",
+                "execs_delta": exec_delta,
+                "points": len(self.points)
+            }
+        
+        old_min_dist = oldest.get("min_distance")
+        new_min_dist = newest.get("min_distance")
+
+        newest_exec_done = int(_safe_num(newest, "execs_done", 0) or 0)
+
+        plateau_paths = path_delta < self.cfg.min_paths_delta
+        plateau_bitmap = bitmap_delta < self.cfg.min_bitmap_delta
+
+        plateau_dist = False
+        dist_improve_ratio = None
+        if isinstance(old_min_dist, (int, float)) and isinstance(new_min_dist, (int, float)) and old_min_dist > 0:
+            dist_improve_ratio = (old_min_dist - new_min_dist) / old_min_dist
+            plateau_dist = dist_improve_ratio < self.cfg.min_distance_improve_ratio
+        
+        hit = 0
+        hit += 1 if plateau_paths else 0
+        hit += 1 if plateau_bitmap else 0
+        hit += 1 if plateau_dist else 0
+
+        diag = {
+            "exec_done": newest_exec_done,
+            "exec_delta": exec_delta,
+            "paths_delta": path_delta,
+            "bitmap_delta": bitmap_delta,
+            "dist_improve_ratio": dist_improve_ratio,
+            "plateau_paths": plateau_paths,
+            "plateau_bitmap": plateau_bitmap,
+            "plateau_dist": plateau_dist,
+            "hits": hit,
+            "points": len(self.points),
+        }
+
+        return (hit>=2), diag
+
+class FuzzStatsWindowManager:
+    def __init__(self, cfg: Optional[PlateauConfig] = None):
+        self.cfg = cfg or PlateauConfig()
+        self._windows: Dict[str, FuzzStatsWindow] = {}
+    
+    def push(self, root_api: str, stats: Dict[str, Any], ts:Optional[float] = None) -> None:
+        if root_api not in self._windows:
+            self._windows[root_api] = FuzzStatsWindow(cfg=self.cfg)
+        self._windows[root_api].push(stats, ts)
+    
+    def plateau(self, root_api: str) -> Tuple[bool, Dict[str, Any]]:
+        w = self._windows.get(root_api)
+        if not w:
+            return False, {"reason": "no_window"}
+        
+        return w.plateau()
+    
+    def reset(self, root_api: str) -> None:
+        if root_api in self._windows:
+            del self._windows[root_api]
+
+def fuzzer_stats_analysis(fuzzer_stats: Dict[str, Any], root_api: str, window_mgr: Optional[FuzzStatsWindowManager] = None) -> Dict[str, Any]:
     issues: List[str] = []
     hints: List[str] = []
 
@@ -34,7 +143,7 @@ def fuzzer_stats_analysis(fuzzer_stats: Dict[str, Any]) -> Dict[str, Any]:
             hints.append("A low bitmap_cvg value indicates a relatively simple execution path."
                          "consider reducing overly strict conditional checks, or constructing a simple fallback object to continue the call chain when input parsing fails.")
     
-    coverage_score = min(bitmap_cvg / 15.0, 1.0) # 15%及以上视为满分
+    coverage_score = min(bitmap_cvg / 15.0, 1.0) # 15% and above is considered good coverage
 
     # stability analysis
     if stability < 95.0 or unique_crashes > 0:
@@ -81,24 +190,30 @@ def fuzzer_stats_analysis(fuzzer_stats: Dict[str, Any]) -> Dict[str, Any]:
                 "min_distance has decreased significantly compared to cur_distance, indicating the existence of paths closer to the target;"
                 "this could continue fuzzing and replay these 'near-distance' samples in queue for refinement."
             )
-        
-        # plateau period detection
-        if execs_done > 1000000 and paths_total > 1000:
-            if 0.3 <= norm_min <= 0.7 and bitmap_cvg >= 8.0:
-                issues.append("distance_plateau_period_suspected")
-                hints.append(
-                    "bitmap_cvg is at a medium level, min_distance/max_distance are in the middle range."
-                    "This indicates that the basic path has been explored sufficiently, but there is still a significant gap from the target."
-                    "Try combining static call chain analysis with runtime trace analysis to determine which layer of the chain is stuck."
-                )
     
     # efiiciency recomendation
-    if execs_per_sec < 100.0 and execs_per_sec > 100000:
+    if execs_per_sec < 100.0:
         hints.append(
             f"exec_per_sec={execs_per_sec:.1f}, that is too slow."
             "consider reducing unnecessary duplicate parsing or large object allocation."
             "for example, move initializations that don't depend on fuzz input out of __AFL_LOOP ."
         )
+    
+    # window-based plateau augmentation
+    plateau_diag = None
+    if window_mgr is not None and root_api is not None and execs_done >= 100_000:
+        window_mgr.push(root_api, fuzzer_stats)
+        is_plateau, diag = window_mgr.plateau(root_api)
+        plateau_diag = diag
+
+        unhealthy_blockers = {"unstable_harness_or_target", "very_low_coverage"}
+        if is_plateau and not any(i in unhealthy_blockers for i in issues):
+            if "distance_plateau_period_suspected" not in issues:
+                issues.append("distance_plateau_period_suspected")
+            hints.append(
+                f"Window plateau detected: paths_delta={diag.get('paths_delta')}, "
+                f"bitmap_delta={diag.get('bitmap_delta')}, dist_improve_ratio={diag.get('dist_improve_ratio')}."
+            )
     
     analysis_result = {
         "issues": issues,
@@ -107,14 +222,15 @@ def fuzzer_stats_analysis(fuzzer_stats: Dict[str, Any]) -> Dict[str, Any]:
             "coverage_score": coverage_score,
             "stability_score": stability_score,
             "distance_score": distance_score
-        }
+        },
+        "plateau_diag": plateau_diag
     }
 
     return analysis_result
 
-def is_harness_qualified_in_coares_grain(fuzzer_stats: Dict[str, Any]) -> bool:
+def is_harness_qualified_in_coares_grain(fuzzer_stats: Dict[str, Any], root_api: str) -> bool:
     # A coarse-grain qualification check for harnesses based on fuzzer stats, used to filter out obviously invalid harnesses.
-    analysis_result = fuzzer_stats_analysis(fuzzer_stats)
+    analysis_result = fuzzer_stats_analysis(fuzzer_stats, root_api)
     issues = analysis_result.get("issues", [])
     quality_blockers = {
         "unstable_harness_or_target",
@@ -122,7 +238,7 @@ def is_harness_qualified_in_coares_grain(fuzzer_stats: Dict[str, Any]) -> bool:
         "no_distance_progress"
     }
 
-    if issues in quality_blockers:
+    if any(i in quality_blockers for i in issues):
         return False
     
     return True

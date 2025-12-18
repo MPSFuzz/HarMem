@@ -4,6 +4,7 @@ import os
 import shlex
 import datetime
 
+from dataclasses import dataclass
 from src.utils.utils import get_logger, get_path_subfolder
 
 logger = get_logger(__name__)
@@ -101,4 +102,8 @@ class harness:
             logger.error(f"Compilation failed with error:\n{e.stderr}")
             self.compile_result = e.stderr 
             return False
-    
+
+@dataclass
+class seed_for_harness:
+    seed_content: str
+    seed_save_path: str
