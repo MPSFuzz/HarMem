@@ -1,8 +1,9 @@
 import json
 import os
 
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Set
 from pathlib import Path
+from collections import defaultdict, deque
 
 from src.utils.utils import get_logger
 from src.batch.batch_class import Batch
@@ -10,6 +11,43 @@ from src.batch.batch_class import Batch
 logger = get_logger(__name__)
 
 META_GOLB = "trace_meta_*.json"
+
+def _expand_with_callees(merged_metadata: Dict[str, Any], seed_func_global_ids: Set[int], depth: int ) -> Set[int]:
+    """Expand a seed set of function global_ids with their callees up to a given depth.
+
+    This is used to optionally include a small neighborhood around the external call chain,
+    without changing the default behavior when depth is 0.
+    """
+    if depth <= 0:
+        return set(seed_func_global_ids)
+    
+    adj: Dict[int, Set[int]] = defaultdict(set)
+    for c in merged_metadata.get("calls", []):
+        fg = c.get("from_func_global_id")
+        tg = c.get("to_func_global_id")
+        if fg in None or tg is None:
+            continue
+        try:
+            fg_i = int(fg)
+            tg_i = int(tg)
+        except Exception:
+            continue
+        adj[fg_i].add(tg_i)
+    
+    expanded: Set[int] = set(seed_func_global_ids)
+    q = deque([(fid, 0) for fid in seed_func_global_ids])
+
+    while q:
+        fid, d = q.popleft()
+        if d >= depth:
+            continue
+        for nxt in adj.get(fid, []):
+            if nxt not in expanded:
+                expanded.add(nxt)
+                q.append((nxt, d + 1))
+    
+    return expanded
+
 
 def load_all_meta(meta_dir: str = "/tmp") -> Dict[str, dict]:
     modules = {}
@@ -29,10 +67,12 @@ def build_global_ids(modules: Dict[str, dict]) -> dict:
     func_global : Dict[Tuple[str, int], int] = {}
     branch_global : Dict[Tuple[str, int], int] = {}
     call_global : Dict[Tuple[str, int], int] = {}
+    marker_global : Dict[Tuple[str, int], int] = {}
 
     next_fid = 0
     next_bid = 0
     next_cid = 0
+    next_mid = 0
 
     for module_id, m in modules.items():
         for f in m.get("functions", []):
@@ -57,15 +97,25 @@ def build_global_ids(modules: Dict[str, dict]) -> dict:
             if key not in call_global:
                 call_global[key] = next_cid
                 next_cid += 1
+    
+    for module_id, m in modules.items():
+        for mk in m.get("markers", []):
+            local_id = int(mk["id"])
+            key = (module_id, local_id)
+            if key not in marker_global:
+                marker_global[key] = next_mid
+                next_mid += 1
 
     merged = {
         "functions": [],
         "branches": [],
         "calls": [],
+        "markers": [],
         "index": {
             "func": {},
             "branch": {},
-            "call": {}
+            "call": {},
+            "marker": {}
         }
     }
 
@@ -124,60 +174,101 @@ def build_global_ids(modules: Dict[str, dict]) -> dict:
             })
             merged["index"]["call"][f"{module_id}:{local_id}"] = g_id
     
+    for module_id, m in modules.items():
+        for mk in m.get("markers", []):
+            local_id = int(mk["id"])
+            g_id = marker_global[(module_id, local_id)]
+
+            func_local = int(mk["func_id"])
+            func_global_id = func_global.get((module_id, func_local), None)        # marker is always inside a function we saw in this module
+
+            merged["markers"].append({
+                "global_id": g_id,
+                "module_id": module_id,
+                "local_id": local_id,
+                "func_global_id": func_global_id,
+                "tag": mk.get("tag", ""),
+                "file": mk.get("file", ""),
+                "line": mk.get("line", 0),
+            })
+            merged["index"]["marker"][f"{module_id}:{local_id}"] = g_id
+    
     return merged
 
 def get_merged_metadata(meta_dir: str = "/tmp") -> dict:
     modules = load_all_meta(meta_dir)
-    merged_metadta = build_global_ids(modules)
+    merged_metadata = build_global_ids(modules)
 
     logger.info(f"[runtime_components] Merged compile pass trace metadata from {len(modules)} modules")
 
-    return merged_metadta
+    return merged_metadata
 
-def build_filtered_metadata(merged_metadata: dict, plan_json: Dict[str, Any], root_api: str) -> dict:
+def build_filtered_metadata(
+    merged_metadata: dict,
+    plan_json: Dict[str, Any],
+    root_api: str,
+    callee_depth: int = 0,
+) -> dict:
     external_chain = plan_json.get("external_chain", [])
     target_func_names = set(external_chain)
 
-    func_name_to_ids = {}
+    func_name_to_ids: Dict[str, Set[int]] = {}
     for f in merged_metadata.get("functions", []):
-        name = f["name"]
-        gid = f["global_id"]
-        func_name_to_ids.setdefault(name, set()).add(gid)
-    
-    target_func_global_ids = set()
-    missing = []
+        name = f.get("name", "")
+        gid = f.get("global_id")
+        if name and gid is not None:
+            try:
+                func_name_to_ids.setdefault(name, set()).add(int(gid))
+            except Exception:
+                continue
+
+    target_func_global_ids: Set[int] = set()
+    missing: List[str] = []
     for name in target_func_names:
         ids = func_name_to_ids.get(name)
         if not ids:
             missing.append(name)
         else:
             target_func_global_ids.update(ids)
-    
+
     if missing:
         logger.warning(f"[runtime_components] Missing target functions in merged metadata: {missing}")
-    
+
+    if callee_depth and callee_depth > 0:
+        target_func_global_ids = _expand_with_callees(merged_metadata, target_func_global_ids, callee_depth)
+
     filtered_funcs = [
         f for f in merged_metadata.get("functions", [])
-        if f["global_id"] in target_func_global_ids
+        if int(f.get("global_id", -1)) in target_func_global_ids
     ]
 
     filtered_branches = [
         b for b in merged_metadata.get("branches", [])
-        if b.get("func_global_id") in target_func_global_ids
+        if int(b.get("func_global_id", -1)) in target_func_global_ids
     ]
 
-    filtered_calls = []
+    filtered_calls: List[Dict[str, Any]] = []
     for c in merged_metadata.get("calls", []):
-        fg = c.get("from_func_global_id")
-        tg = c.get("to_func_global_id")
+        fg = int(c.get("from_func_global_id", -1))
+        tg = int(c.get("to_func_global_id", -1))
         if fg in target_func_global_ids and tg in target_func_global_ids:
             filtered_calls.append(c)
+    
+    filtered_markers = []
+    for mk in merged_metadata.get("markers", []):
+        fg = mk.get("func_global_id")
+        tag = (mk.get("tag", "") or "").lower()
+        if (fg in target_func_global_ids) or (tag == "bug_point"):
+            filtered_markers.append(mk)
 
     filtered_metadata = {
         "root_api": root_api,
+        "external_chain": external_chain,
+        "callee_depth": int(callee_depth) if callee_depth else 0,
         "functions": filtered_funcs,
         "branches": filtered_branches,
         "calls": filtered_calls,
+        "markers": filtered_markers,
     }
 
     return filtered_metadata
@@ -210,16 +301,19 @@ def get_filtered_metadata_for_specific_root_api(meta_dir: str, batch: Batch, roo
     return str(save_file)
 
 if __name__ == "__main__":
-    batch = Batch.load_metadata("/root/auto_harness/src/batch_metadata/281bed94-b819-4c8c-8b94-7657e9f40a88.json")
+    batch = Batch.load_metadata("/root/auto_harness/src/batch_metadata/cebdd898-5d7c-453a-9601-ab1d49ed2798.json")
     filtered_metadata_path = get_filtered_metadata_for_specific_root_api("/tmp", batch, "xmlDocCopyNodeList")
     
     from src.runtime_components.get_runtime_trace_result import get_aggregate_runtime_trace_information
-    from src.runtime_components.runtime_trace_feedback_analysis import build_llm_feedback_prompt
+    from src.runtime_components.runtime_trace_feedback_analysis import build_llm_feedback_prompt, build_llm_micro_tune_prompt
     harness_path = batch.harness_info.get("harness_files", "").get("xmlDocCopyNodeList", "")
     baseline_seeds_path = Path(harness_path).parent / "in"
     baseline_seeds = [p for p in baseline_seeds_path.iterdir() if p.is_file()]
 
-    sampled_cases_pathes, sampled_queue_seed_runtime_trace_result = get_aggregate_runtime_trace_information(batch, "xmlDocCopyNodeList", filtered_metadata_path, "/root/auto_harness/src/harness/20251118_075629/in")
-    prompt = build_llm_feedback_prompt(batch, sampled_queue_seed_runtime_trace_result, harness_path, baseline_seeds, sampled_cases_pathes)
+    sampled_cases_pathes, sampled_queue_seed_runtime_trace_result = get_aggregate_runtime_trace_information(batch, "xmlDocCopyNodeList", filtered_metadata_path, "/root/auto_harness/src/harness/20260108_091611/in")
+    
+    prompt = build_llm_feedback_prompt(batch, sampled_queue_seed_runtime_trace_result, batch.target_func, harness_path, baseline_seeds, sampled_cases_pathes)
+    print(prompt)
 
-    #print(prompt)
+    prompt = build_llm_micro_tune_prompt(batch, sampled_queue_seed_runtime_trace_result, batch.target_func, harness_path, baseline_seeds, sampled_cases_pathes)
+    print(prompt)

@@ -11,7 +11,8 @@ def parse_fuzzer_stats_file(outdir_path: str) -> Dict[str, Any]:
     
     if not os.path.isfile(stats_file_path):
         logger.warning(f"[fuzz feedback parser] fuzzer_stats file not found at {stats_file_path}")
-        raise FileNotFoundError(f"fuzzer_stats file not found at {stats_file_path}")
+        # raise FileNotFoundError(f"fuzzer_stats file not found at {stats_file_path}")
+        return
 
     file_raw_data: Dict[str, Any] = {}
     with open(stats_file_path, "r", encoding="utf-8") as f:

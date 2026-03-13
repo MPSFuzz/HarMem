@@ -4,7 +4,7 @@ import subprocess
 from typing import Dict, Any, Optional
 from pathlib import Path
 from src.utils.utils import get_logger
-from src.utils.utils import get_path_in
+from src.utils.utils import get_path_in, copy_seeds_provided_by_user
 from src.batch.batch_class import Batch
 
 logger = get_logger(__name__)
@@ -17,8 +17,15 @@ def _process_harness_path(harness_sourcecode_path: str) -> str:
 
     return str(harness_path)
 
-def _ensure_seed_dir(input_path: str) -> None:
+def _ensure_seed_dir(input_path: str, seeds_path: Optional[str]=None) -> None:
     os.makedirs(input_path, exist_ok=True)
+
+    if seeds_path:
+        if copy_seeds_provided_by_user(Path(seeds_path), Path(input_path)):
+            logger.info(f"[fuzz] copied seed inputs from {seeds_path} to {input_path}")
+            return
+        else:
+            logger.warning(f"[fuzz] failed to copy seed inputs from {seeds_path} to {input_path}, will use default seed instead")
 
     has_files = any(Path(input_path).iterdir())
     if not has_files:
@@ -27,7 +34,7 @@ def _ensure_seed_dir(input_path: str) -> None:
             f.write("111\n")
         logger.info(f"[fuzz] created default seed at {seed_path}")
 
-def _generate_fuzz_command(harness_path: str) -> str:
+def _generate_fuzz_command(harness_path: str, seeds_path: Optional[str]=None) -> str:
     p = Path(harness_path)
     harness_dir = str(p.parent)
 
@@ -35,7 +42,7 @@ def _generate_fuzz_command(harness_path: str) -> str:
     output_path = os.path.join(harness_dir, "out")
     dict_path = os.path.join(harness_dir, "harness_dict.dict")
 
-    _ensure_seed_dir(input_path)
+    _ensure_seed_dir(input_path, seeds_path)
     os.makedirs(output_path, exist_ok=True)
 
     dict_arg = f"-x {dict_path}" if os.path.exists(dict_path) else ""
@@ -72,9 +79,27 @@ def _get_env_var() -> dict:
         _shell_env_cache = env
     return _shell_env_cache
 
-def _run_fuzzer(harness_sourcecode_path: str):
+def _clean_out_dir(harness_sourcecode_path: str):
+    p = Path(harness_sourcecode_path)
+    harness_dir = str(p.parent)
+    out_dir = os.path.join(harness_dir, "out")
+
+    if os.path.exists(out_dir):
+        try:
+            for file in os.listdir(out_dir):
+                file_path = os.path.join(out_dir, file)
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    import shutil
+                    shutil.rmtree(file_path)
+            logger.info(f"[fuzz] Cleaned output directory: {out_dir}")
+        except Exception as e:
+            logger.error(f"[fuzz] Failed to clean output directory {out_dir}: {e}")
+
+def _run_fuzzer(harness_sourcecode_path: str, seeds_path: Optional[str] = None):
         harness_path = _process_harness_path(harness_sourcecode_path)
-        fuzz_command = _generate_fuzz_command(harness_path)
+        fuzz_command = _generate_fuzz_command(harness_path, seeds_path=seeds_path)
 
         env = _get_env_var()
 
@@ -105,12 +130,13 @@ def _run_fuzzer(harness_sourcecode_path: str):
         except subprocess.CalledProcessError as e:
             return ""
 
-def start_fuzzing(batch_id: Optional[str] = None,  batch: Optional[Batch] = None, selected_root_api: Optional[str] = None) -> Batch | bool:
+def start_fuzzing(batch_id: Optional[str] = None,  batch: Optional[Batch] = None, selected_root_api: Optional[str] = None, seeds_path: Optional[str] = None) -> Batch | bool:
     if batch and selected_root_api:
         harness_info = batch.harness_info
         harness_sourcecode_path = harness_info["harness_files"].get(selected_root_api, "")
 
-        pid = _run_fuzzer(harness_sourcecode_path)
+        _clean_out_dir(harness_sourcecode_path)
+        pid = _run_fuzzer(harness_sourcecode_path, seeds_path=seeds_path)
         if pid:
             batch.fuzzer_pids[selected_root_api] = pid
             logger.info(f"[fuzz] Fuzzing started successfully for selected root API: {selected_root_api}")
@@ -127,7 +153,8 @@ def start_fuzzing(batch_id: Optional[str] = None,  batch: Optional[Batch] = None
 
         pids: Dict[str, int] = {}
         for root_api, harness_sourcecode_path in harness_info["harness_files"].items():
-            pid = _run_fuzzer(harness_sourcecode_path)
+            _clean_out_dir(harness_sourcecode_path)
+            pid = _run_fuzzer(harness_sourcecode_path, seeds_path=seeds_path)
             if pid:
                 pids[root_api] = pid
                 batch_instance.fuzzer_pids = pids

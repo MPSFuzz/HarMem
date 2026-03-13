@@ -44,9 +44,22 @@ def get_target_func_location(func_dir: str, target_func: str) -> list: #获得�
         logger.error("The get_target_func_location.sh script was not found.")
         raise
 
-def _process_root_api(root_api, llm: LLM, call_chain, max_fix = 3):
+def _process_root_api(root_api, llm_global: LLM, call_chain, cve_hints_obj = None, max_fix = 3):
     plan = _global_vars.target_func_plan[root_api]
-    phase_A_context = build_phase_A_context(plan)
+    phase_A_context = build_phase_A_context(plan, cve_hints=cve_hints_obj)
+
+    llm = LLM(
+    lib_name=llm_global.lib_name,
+    target_func=llm_global.target_func,
+    target_location=llm_global.target_location,
+    model=llm_global.model,
+    max_retries=llm_global.max_retries,
+    retry_delay=llm_global.retry_delay,
+    timeout=llm_global.timeout,
+    )
+
+    llm.cve_hints = cve_hints_obj or {}
+
     llm.get_phase_A_context(phase_A_context)
     llm.get_harness_plan(plan)
     h = llm.generate_harness_skeleton(call_chain)
@@ -91,14 +104,14 @@ def _task(root_api, call_chain, compile_commands_path):
         logger.error(f"Error aggregating call chain for root api {root_api}: {e}")
         return root_api, None
 
-def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_func: str, compile_commands_path: str):
+def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_func: str, compile_commands_path: str, cve_hints_obj: dict = None):
     graph = load_call_graph(dot_file=dot_file)
 
     # for target_func in target_funcs:
     locations = get_target_func_location(source_dir, target_func)
     root_apis = get_root_apis(graph=graph, target_func=target_func)
 
-    llm = LLM(target_func = target_func, target_location = str(locations))
+    llm = LLM(target_func = target_func, target_location = str(locations), lib_name=lib_name)
 
     filtered_entry_apis = llm.entry_api_filter(api_list=root_apis)
 
@@ -111,18 +124,18 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
     cpu_counts = multiprocessing.cpu_count()
     logger.debug(f"CPU counts: {cpu_counts}")
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers = min(cpu_counts, len(test_set))) as executor:
-        # futures = [
-        #     executor.submit(task, root_api, call_chain, compile_commands_path)
-        #     for root_api, call_chain in _global_vars.root_api_and_call_chain.items()
-        # ]
-
-        # [quick test] TODO: disable this block after test >>>
+    with concurrent.futures.ProcessPoolExecutor(max_workers = min(cpu_counts, len(_global_vars.root_api_and_call_chain))) as executor:
         futures = [
             executor.submit(_task, root_api, call_chain, compile_commands_path)
-            for root_api, call_chain in test_set.items()
+            for root_api, call_chain in _global_vars.root_api_and_call_chain.items()
         ]
-        # <<<
+
+        # # [quick test] TODO: disable this block after test >>>
+        # futures = [
+        #     executor.submit(_task, root_api, call_chain, compile_commands_path)
+        #     for root_api, call_chain in test_set.items()
+        # ]
+        # # <<<
 
         for future in concurrent.futures.as_completed(futures):
             try:
@@ -140,16 +153,16 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
     logger.info(f"Saved harness plans to {plan_save_path}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        # [quick test] TODO: disable this block after test >>>
-        futures = [
-            executor.submit(_process_root_api, root_api, llm, call_chain)
-            for root_api, call_chain in test_set.items()
-        ]
-        # <<<
+        # # [quick test] TODO: disable this block after test >>>
+        # futures = [
+        #     executor.submit(_process_root_api, root_api, llm, call_chain)
+        #     for root_api, call_chain in test_set.items()
+        # ]
+        # # <<<
 
-        # futures = []
-        # for root_api, call_chain in _global_vars.root_api_and_call_chain.items():
-        #     futures.append(executor.submit(_process_root_api, root_api, llm, call_chain))
+        futures = []
+        for root_api, call_chain in _global_vars.root_api_and_call_chain.items():
+            futures.append(executor.submit(_process_root_api, root_api, llm, call_chain, cve_hints_obj))
 
         for future in concurrent.futures.as_completed(futures):
             root_api, harness_file = future.result()

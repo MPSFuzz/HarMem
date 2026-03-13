@@ -1,3 +1,5 @@
+from src.cve_helper.cve_partial_prompt_render import extract_structural_cve_model
+
 from collections import Counter, defaultdict
 from typing import List, Dict, Any, Optional
 from src.utils.utils import get_logger
@@ -110,7 +112,7 @@ def build_lifecycle_summary(plan: Dict[str, Any]) -> Dict[str, Any]:
         "iteration_resources": unique_iteration_resources
     }
 
-def build_phase_A_context(plan: Dict[str, Any]) -> Dict[str, Any]:
+def build_phase_A_context(plan: Dict[str, Any], cve_hints: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     chain = plan.get("chain", {})
     nodes: List[Dict[str, Any]] = chain.get("nodes", [])
 
@@ -123,6 +125,8 @@ def build_phase_A_context(plan: Dict[str, Any]) -> Dict[str, Any]:
 
     call_chain = [n.get("name") for n in nodes if n.get("name")]
     lifecycle_sum = build_lifecycle_summary(plan)
+
+    contextual_bug_model = extract_structural_cve_model(cve_hints or {})
 
     context = {
         "call_chain": call_chain,
@@ -138,6 +142,7 @@ def build_phase_A_context(plan: Dict[str, Any]) -> Dict[str, Any]:
             "file": target.get("file"),
             "location": target.get("location")
         },
+        "contextual_bug_model": contextual_bug_model,
         "lifecycle_summary": lifecycle_sum
     }
 

@@ -3,6 +3,10 @@ import matplotlib.pyplot as plt
 import random
 from typing import Any
 
+from src.utils.utils import get_logger
+
+logger = get_logger(__name__)
+
 
 def load_call_graph(dot_file):
     try:
@@ -66,6 +70,10 @@ def get_root_apis(graph:nx.DiGraph, target_func) ->list :
                     reachable_root_nodes.add(predecessor)
                 else:
                     stack.append(predecessor)
+
+    if len(reachable_root_nodes) == 0:
+        logger.info(f"[extract_target_call_chain] '{target_func}' has no parent node, treating itself as root.")
+        reachable_root_nodes.add(target_node)
     
     reachable_roots = get_label_by_Node(graph, reachable_root_nodes)
 
@@ -82,7 +90,7 @@ def extract_target_call_chain(graph:nx.DiGraph, target_func, root_apis: list) ->
     for root_api in root_nodes:
         all_paths = nx.all_simple_paths(graph, source=root_api, target=target_node, cutoff=7)
 
-        candidate_paths = [path for path in all_paths if 5 <= len(path) <= 7]
+        candidate_paths = [path for path in all_paths if 1 <= len(path) <= 7]
 
         if candidate_paths:
             for path in candidate_paths[:5]:

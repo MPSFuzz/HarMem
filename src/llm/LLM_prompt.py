@@ -1,3 +1,5 @@
+from string import Template
+
 SKELETON_GENERATE_PROMPT = """
         You are an expert C programmer and fuzzing practitioner.
 
@@ -5,285 +7,258 @@ SKELETON_GENERATE_PROMPT = """
         You MUST strictly follow the output format requirements below:
         - Do NOT write any explanations.
         - Do NOT write markdown.
-        - Do NOT write prose, lists, or headings.
+        - Do NOT write prose outside the JSON object.
         - Your entire reply MUST be a single valid JSON object and nothing else.
 
-        We want to fuzz a library named %s using AFL/AFLGo. Below is a JSON context
-        with static analysis information about a specific call chain and
-        lifecycle hints extracted from the project:
+        We want to fuzz a library named {lib_name} using AFL/AFLGo.
+
+        Below is a JSON context with static analysis information about a specific call chain and lifecycle hints extracted from the project:
 
         === STATIC CONTEXT (JSON) ===
-        %s
+        {phase_a_context}
 
-        This static context may contain:
-        - chain.nodes[*].name / signature / file / location
-        - chain.nodes[*].visibility: "external" or "internal"
-        - external_chain: an ordered list of APIs that are safe to call from a harness
-        - lifecycle_plan: init/cleanup hints
-        - (and possibly other analysis fields)
+        {cve_hints_block}
 
-        Your task in THIS PHASE is NOT to implement the full call chain,
-        but to:
+        Your task in THIS PHASE is NOT to implement the final bug-triggering logic in full detail.
+        Your task is to design a reusable AFL/AFLGo fuzz harness SKELETON in C that will later be used to generate the final harness code.
 
-        1) Design a reusable AFL/AFLGo fuzz harness SKELETON in C for this library,
-        using lifecycle information (global init / global cleanup / per-iteration cleanup)
-        and any root API / external_chain hints to decide how to structure main()
-        and the fuzzing loop.
+        The skeleton must capture:
+        1. The overall structure of main()
+        2. Global initialization and cleanup
+        3. The fuzzing loop
+        4. Per-iteration parsing / object construction / cleanup
+        5. The semantic input layout and object roles required to eventually reach the target API and the bug-relevant path
+        6. A placeholder region where the concrete chain logic will be inserted later
 
-        2) Search for real-world usage examples (tests, sample code, tutorials, official docs)
-        of the APIs in this call chain.
+        Important design goal:
+        The skeleton is not only for generic API invocation.
+        It must already preserve bug-relevant input structure if the CVE-aware constraints indicate that the bug depends on specific semantic input roles, parser objects, schemas, documents, contexts, flags, or object lifetimes.
 
-        3) Based on these examples, design a reusable AFL/AFLGo fuzz harness SKELETON in C,
-        with a clear placeholder region for the future call-chain logic.
+        === General requirements on the harness skeleton ===
 
-        4) Provide small, self-contained usage snippets and short documentation summaries
-        for each API in the chain.
+        1. The skeleton must be valid C code.
 
-        === Requirements on the AFL/AFLGo harness skeleton ===
-        The skeleton must be valid C code and should:
-
-        1. Include a standard AFL persistent loop with a safe fallback:
+        2. It must include a standard AFL persistent loop with a safe fallback:
 
         #ifndef __AFL_LOOP
         static int __afl_once = 1;
         #define __AFL_LOOP(x) (__afl_once-- > 0)
         #endif
 
-        2. Read fuzz input from a FILE whose path is given as argv[1],
-        read the entire file into a heap buffer, and keep both the pointer and size.
-        (Assume AFL/AFLGo will use @@ to substitute the filename.)
+        3. It must read fuzz input from a file path given as argv[1], read the whole file into a heap buffer, and preserve both pointer and size.
 
-        3. Have a main() function like:
+        4. It must contain a main() like this in spirit:
+        - check argc
+        - perform global/library init if needed
+        - enter AFL persistent loop
+        - read fuzz input
+        - build any per-iteration objects required by the bug model
+        - @@CHAIN_LOGIC_BEGIN@@
+        - placeholder for later concrete chain logic
+        - @@CHAIN_LOGIC_END@@
+        - per-iteration cleanup
+        - final global cleanup
 
-        int main(int argc, char **argv) {
-            // check argc
-            // initialize the target library if needed
-            while (__AFL_LOOP(10000)) {
-                // read file at argv[1] into memory
-                // parse it or create a basic input object if appropriate
-                // @@CHAIN_LOGIC_BEGIN@@
-                //   (this region will later be replaced by code that follows the call chain)
-                // @@CHAIN_LOGIC_END@@
-                // cleanup resources for this iteration
-            }
-            // global cleanup (e.g., xmlCleanupParser)
-            return 0;
-        }
+        5. The skeleton MUST NOT fully implement the final call-chain logic in this phase.
+        Inside @@CHAIN_LOGIC_BEGIN@@ / @@CHAIN_LOGIC_END@@, only put placeholder comments or the minimum safe scaffolding needed to keep the structure coherent.
 
-        4. DO NOT implement the full call chain in this phase.
-        Inside the @@CHAIN_LOGIC_BEGIN@@ / @@CHAIN_LOGIC_END@@ region, only put minimal
-        placeholder comments or the simplest safe operations needed to keep the program
-        logically consistent. The real call-chain logic will be generated in a later phase.
+        6. The skeleton MUST NOT define any new functions whose names exactly match APIs in the call chain.
+        Do not stub internal library APIs.
 
-        5. The skeleton MUST NOT define any new functions whose names exactly match APIs in
-        the call chain (do NOT stub internal APIs). Only call functions, do not
-        re-implement them.
+        7. If the bug depends on multiple semantic input roles, the skeleton MUST preserve those roles explicitly.
+        For example:
+        - schema vs instance document
+        - control structure vs payload
+        - context object vs input blob
+        Do NOT collapse distinct semantic roles into one generic input object unless the provided constraints strongly justify that design.
 
-        6. When deciding which APIs (if any) to call inside the skeleton_code:
-        - Prefer using public / external APIs:
-            * functions that appear in external_chain, or
-            * functions whose node.visibility == "external".
-        - You MUST NOT call functions whose node.visibility == "internal" (these are
-            typically internal or static library APIs). Such APIs may still appear in
-            api_usage_snippets, but MUST NOT be called from skeleton_code.
+        8. The skeleton should separate:
+        - fixed components
+        - fuzz-controlled components
+        - hybrid components (fixed template + fuzz-controlled fields)
 
-        7. The skeleton should already contain an AFLGo target marker placeholder near where
-        the target API will be called in the future, for example:
+        9. Expensive and stable initialization should be placed outside the fuzz loop if safe.
+        Per-input parsing and bug-triggering operations should stay inside the loop.
 
-        // AFLGo target marker will be inserted here before calling the target API
-        // volatile int afl_target = 0; afl_target++;
+        10. The skeleton should include an AFLGo target marker placeholder near the future target API invocation site, for example:
+            // AFLGo target marker will be inserted here before calling the target API
+            // volatile int afl_target = 0; afl_target++;
 
-        8. The skeleton should be as generic as possible for this library, following common
-        initialization and cleanup patterns inferred from real-world examples and
-        official docs.
+        11. Prefer public / external APIs where such information is available.
+        Do not directly call internal-only APIs from the skeleton unless they are actually callable public APIs according to the static context.
 
-        === Requirements on API usage snippets ===
-        For EACH API name in the call chain, you MUST:
+        === Output format (STRICT JSON) ===
+        Return exactly one JSON object with this shape:
 
-        - Search for realistic usage in tests, examples, sample code, or documentation.
-        - Provide a small, self-contained code snippet (C) that shows how the API is
-        typically used (including required types/structures and surrounding calls).
-        - Summarize, in one or two sentences:
-        * what the API does,
-        * key preconditions (e.g., which arguments must be non-NULL / allocated),
-        * and any important flags or options.
-
-        If an API is internal or rarely documented:
-        - Try to infer its usage from nearby code or call sites in the library or tests.
-        - Clearly state that the usage is inferred when summarizing.
-        - Remember: internal APIs may appear in snippets and summaries, but MUST NOT be
-        called inside skeleton_code.
-
-        === Output Format (STRICT JSON) ===
-        You MUST return a single JSON object with the following structure:
-
-        {
+        {{
         "language": "C",
-        "skeleton_code": "<the complete C skeleton with @@CHAIN_LOGIC_BEGIN@@ and @@CHAIN_LOGIC_END@@ placeholders>",
-        "compile_command_hint": "<a plausible aflgo-clang compile command, using a.c and a.out, e.g. 'aflgo-clang -g -O2 a.c -o a.out $(pkg-config --cflags --libs libxml-2.0)'>",
+        "skeleton_code": "<complete C skeleton with @@CHAIN_LOGIC_BEGIN@@ and @@CHAIN_LOGIC_END@@ placeholders>",
+        "compile_command_hint": "<plausible aflgo-clang compile command for this harness>",
+        "input_layout_summary": {{
+            "semantic_roles": ["<role1>", "<role2>"],
+            "fixed_components": ["..."],
+            "fuzz_components": ["..."],
+            "hybrid_components": ["..."]
+        }},
         "api_usage_snippets": [
-            {
-            "api": "<API name from the call chain>",
-            "snippet": "<a small C code snippet showing realistic usage of this API>",
-            "source_hint": "<short text indicating whether this seems to come from tests, examples, docs, etc. Do NOT include URLs.>",
-            "summary": "<1–3 sentences about what the API does and important preconditions/flags>"
-            }
-            // one object per API in the chain
+            {{
+            "api": "<API name>",
+            "snippet": "<small realistic usage snippet in C>",
+            "source_hint": "<tests/examples/docs/inferred>",
+            "summary": "<1-3 sentences>"
+            }}
         ],
-        "doc_summaries": {
-            "<API name>": "<short documentation-style description>",
-            "...": "..."
-        }
-        }
+        "doc_summaries": {{
+            "<API name>": "<short documentation-style description>"
+        }}
+        }}
         """
 
 
-CODE_GENERATE_PROMPT = """
-        You are an expert in fuzz testing and C programming, and you are testing an open-source library called %s.
-        Your goal is to generate a high-quality AFL/AFLGo fuzz harness that triggers the target function named "%s".
+CODE_GENERATE_PROMPT = Template("""
+        You are an expert in fuzz testing and C programming.
+        
+        You are generating a vulnerability-oriented AFL/AFLGo harness for the open-source library ${lib_name}.
+        
+        The harness must drive the target API ${target_func} and maximize the practical chance of reaching the target bug point.
+        This harness is for bug reproduction, not merely broad API coverage.
+        
+        IMPORTANT:
+        - Mutated fuzz inputs must meaningfully influence control-flow and data-flow toward the bug-relevant path.
+        - Do NOT produce a harness that trivially reaches the target independent of input.
+        - Do NOT output explanations.
+        - Your entire reply MUST be a single valid JSON object and nothing else.
+        
+        You are given:
+        
+        1) Source code of the target function
+        2) Code snippets near the target bug point
+        3) A static analysis plan
+        4) A pre-generated skeleton JSON
+        5) CVE-aware bug reproduction constraints (optional, may not be provided)
+        
+        ==================== Source Code of The Target Function ====================
+        ```c
+        ${target_function_source}
+        ```
 
-        In THIS PHASE, you MUST NOT write the harness from scratch.
-        Instead, you are given:
+        ==================== Code Snippets of The Target Bug Point ====================
 
-        1) A detailed static analysis PLAN (JSON) for the target call chain.
-        2) A pre-generated SKELETON (JSON) that already contains:
-        - a complete C fuzz driver skeleton,
-        - AFL/AFLGo loop and file-input handling,
-        - and a placeholder region marked by:
-            @@CHAIN_LOGIC_BEGIN@@
-                // chain logic to be generated here
-            @@CHAIN_LOGIC_END@@
-
-        Your task is to:
-        - Start from the given skeleton_code.
-        - ONLY replace the code between @@CHAIN_LOGIC_BEGIN@@ and @@CHAIN_LOGIC_END@@.
-        - Keep EVERYTHING outside that region unchanged (includes, main(), __AFL_LOOP fallback, file reading, init/cleanup patterns, etc.).
-        - Inside the placeholder region, implement the call-chain logic that uses as many functions in the call chain as possible
-        and correctly calls the target function.
+        ```
+        ${bug_point_source_code_snippets}
+        ```
 
         ==================== Static Analysis PLAN (JSON) ====================
-        %s
+        ${plan_json}
+                                
+        This plan may include:
 
-        This JSON object provides:
-        - "chain": a call chain from the root API to the target function (ordered from top-level to target).
-        - "nodes": detailed function signatures, source locations, preconditions, required initialization patterns and specific implementation hints.
-        - Each node may have a "visibility" field:
-            * "external": safe to call from a harness.
-            * "internal": static or internal helper; MUST NOT be called directly from the harness.
-        - "external_chain": an ordered list of external APIs that should be preferred as the explicit call sequence in the harness.
-        - "resources": allocation and release operations associated with each function.
-        - "lifecycle_plan": alloc/free, init/cleanup steps that should be followed to maintain a valid program state.
-        - "bitmask_bundles" and "preconditions": flag constraints, runtime checks, or conditional guards that may affect valid inputs.
-        - "harness_hint": suggested default arguments, flag combinations, or parameter mappings.
+        - chain.nodes
+        - signatures
+        - visibility information
+        - resources
+        - lifecycle hints
+        - harness hints
+        - external chain information
 
         ==================== SKELETON & API USAGE INFO (JSON) ====================
-        %s
+        ${skeleton_json}
 
-        This JSON object provides:
-        - "skeleton_code": a complete C fuzz driver that:
-            * defines main(),
-            * reads fuzz input from argv[1] into a heap buffer,
-            * contains a persistent AFL loop with a safe fallback,
-            * and has @@CHAIN_LOGIC_BEGIN@@ / @@CHAIN_LOGIC_END@@ placeholders.
-        - "compile_command_hint": a plausible aflgo-clang compile command template.
-        - "api_usage_snippets": realistic C usage examples for each API in the call chain.
-        - "doc_summaries": short documentation-style descriptions for each API.
+        This skeleton JSON provides:
 
-        ==================== YOUR TASK (STRICT) ====================
+        - skeleton_code
+        - compile_command_hint
+        - input_layout_summary
+        - api_usage_snippets
+        - doc_summaries
+
+        ${cve_hints_block}
+        ==================== YOUR TASK ====================
+
+        You MUST generate a COMPLETE, COMPILABLE harness in C or C++ in JSON form.
+
+        You MUST start from the provided skeleton_code.
+
+        Primary rule:
+
+        - The skeleton already defines the overall driver structure.
+        - Preserve the skeleton’s structure unless a very small local refinement is necessary for correctness.
+        - The main goal is to fill in the concrete harness logic so the harness is aligned with the bug model.
 
         You MUST:
 
-        1. Use the skeleton_code as the base.
-        - Do NOT change:
-            * the __AFL_LOOP fallback macro,
-            * the way argv[1] is read and the buffer is allocated,
-            * the overall structure of main(),
-            * global init/cleanup patterns that are already present (e.g., xmlInitParser/xmlCleanupParser),
-            * error-handling and cleanup code outside the placeholder region.
+        1. Use the provided skeleton_code as the base harness.
+        2. Keep global structure, AFL loop, argv[1] file reading, and outer init/cleanup patterns compatible with the skeleton.
+        3. Replace or refine the @@CHAIN_LOGIC_BEGIN@@ / @@CHAIN_LOGIC_END@@ region with concrete bug-oriented chain logic.
+        4. Respect the static plan, but do NOT stop at generic API invocation.
+        5. If CVE-aware constraints indicate multiple semantic input roles, preserve them in code.
+        6. If the bug depends on specific schema constructs, parser options, object states, call ordering, or XPath/AST/format structure, implement those concretely.
+        7. Treat bug-relevant deeper touchpoints as important internal reachability targets even if the externally callable target API is ${target_func}.
 
-        2. ONLY modify the code between:
-        @@CHAIN_LOGIC_BEGIN@@
-        @@CHAIN_LOGIC_END@@
+        External vs internal behavior:
 
-        - Replace the placeholder comments with concrete C code that:
-            * follows the call chain in "chain" (from root to target) as much as possible,
-            * uses functions in "external_chain" as the primary explicit call sequence,
-            * respects the function signatures and preconditions in "nodes",
-            * respects resource usage in "resources" and "lifecycle_plan",
-            * uses realistic patterns from "api_usage_snippets" when calling each API.
-        - You MAY declare local variables inside this region if needed.
-        - You MUST NOT redefine any functions whose names appear in the call chain.
+        - Prefer public/external APIs for explicit calls from the harness.
+        - Do NOT fabricate fake stubs for internal APIs.
+        - Do NOT cast opaque pointers to made-up internal structs just to force reachability.
+        - Internal-function information should be treated as guidance for preparing correct inputs and object states around public APIs.
 
-        3. External vs internal APIs:
-        - You MAY ONLY call functions that satisfy at least one of:
-            * they appear in "external_chain", OR
-            * the corresponding node has visibility == "external".
-        - For any node whose visibility == "internal":
-            * DO NOT call it directly from the harness.
-            * DO NOT declare a prototype or stub with the same name.
-            * Treat its "preconditions" and implementation hints as constraints on how
-                to prepare arguments for surrounding external APIs.
+        Target marker:
 
-        - You MUST NOT:
-            * create fake stubs for internal/static functions in order to make calls compile;
-            * cast opaque library context pointers to custom structs just to access internal fields.
+        - Immediately before the explicit call to the target API "${target_func}", insert:
+        volatile int afl_target = 0;
+        afl_target++;
+        - Then perform the target API call.
 
-        4. Target function and AFLGo marker:
-        - Identify the target function "%s" in the call chain.
-        - Immediately BEFORE the line that calls the target function, insert the AFLGo marker, for example:
+        Fuzz influence requirements:
 
-            volatile int afl_target = 0;
-            afl_target++;
+        - The fuzz input must influence meaningful values, structures, or parser decisions.
+        - Avoid making the target path fully hardcoded and input-insensitive.
+        - It is acceptable to use partially fixed templates if the bug model requires specific structure.
+        - It is acceptable to derive multiple semantic objects from one input blob if that improves vulnerability reachability.
 
-        - Then call the target function using correctly prepared arguments (derived from earlier steps in the chain).
+        Bug reproduction requirements:
 
-        5. Call chain coverage:
-        - Attempt to call as MANY functions from the call chain as possible in logical order.
-        - Prefer to follow the order given by "external_chain" for explicit calls.
-        - Use the static analysis plan to propagate objects/handles between calls:
-            * e.g., a doc or context created earlier should be reused by later APIs in the chain.
-        - Use "bitmask_bundles" and "harness_hint.param_defaults" to choose reasonable default flags/options,
-            while still allowing fuzz input to influence buffers, lengths, and sometimes options.
+        - This harness is for vulnerability reproduction, not only coverage.
+        - It is NOT sufficient to merely call the target function with superficially valid inputs.
+        - The generated code should reflect the bug-specific MUST / MUST AVOID constraints from the CVE hints whenever possible.
+        - Do not add defensive logic that masks the bug.
+        - If sanitizer-based observation is relevant, do not suppress the faulty behavior.
 
-        6. Fuzz input influence:
-        - Place operations like fopen outside the __AFL_LOOP loop, not inside it, to avoid slowing down the process.
-        - Ensure that fuzz input (the buffer read from argv[1] and its size) meaningfully influences:
-            * the data parsed into the library (e.g., XML/JSON/text),
-            * or configuration / options where appropriate.
-        - Do NOT ignore the fuzz buffer; it should flow into the library through the root/early APIs.
+        Implementation requirements:
 
-        7. Safety & cleanup:
-        - Do NOT introduce printf/logging; focus on consuming fuzz input and driving the call chain.
-        - Do NOT introduce network I/O.
-        - Ensure all resources allocated in the chain-logic region are properly released before leaving the loop iteration,
-            following "resources" and "lifecycle_plan" (e.g., free docs, contexts, buffers, validators).
-
+        - Include all required headers.
+        - Include helper functions if necessary.
+        - Ensure local resource cleanup is correct enough to keep fuzzing stable.
+        - Keep the harness self-contained except for the target library and normal toolchain dependencies.
         ==================== BUILD REQUIREMENTS (STRICT) ====================
 
         - The final harness MUST be valid C code.
         - It MUST still read fuzz input from argv[1] (as implemented in the skeleton).
         - It MUST still use a persistent fuzzing loop: while (__AFL_LOOP(10000)) { ... }.
-        - The compile command MUST follow the pattern:
+        - The compile command MUST follow the pattern :
+            * use aflgo-clang (or afl-clang-fast/afl-clang) as the compiler,
+            * refer to the harness file as a.c and the output as a.out, e.g.:
 
-            aflgo-clang -g -O2 a.c -o a.out $(pkg-config --cflags --libs XXX)
+            aflgo-clang -g -O2 a.c -o a.out $$(pkg-config --cflags --libs XXX)
 
         Replace XXX with the correct pkg-config name for the target library (e.g., "libxml-2.0")
+        If you need to add sanitizer-related options like "-fsanitize=address, undefined", add them to the compilation command (but be aware of the availability of the compilation command,hat is, DO NOT add them if they are not necessary).
         if this can be inferred from the plan or skeleton; otherwise, give your best guess.
 
         ==================== OUTPUT FORMAT (STRICT JSON) ====================
 
         Return a single JSON object with exactly two properties:
 
-        {
+        {{
         "code": "<the COMPLETE C source of the fuzz harness, based on skeleton_code, with the @@CHAIN_LOGIC@@ region filled in>",
         "compile_command": "<the compile command>"
-        }
+        }}
 
         ATTENTION:
         - "code" MUST contain the full C source (not just the @@CHAIN_LOGIC@@ region).
         - Do NOT use Markdown formatting.
         - Do NOT include any extra fields or text outside this JSON object.
-        """
+        """)
 
 
 HARNESS_FIX_PROMPT = """
@@ -419,6 +394,7 @@ HARNESS_FIX_PROMPT = """
             $(pkg-config --cflags --libs libxml-2.0)
         * You MAY append other standard libraries (-lm, -lz, -lpthread) only if they are clearly relevant.
         - Do NOT remove the function calls that cause the undefined references; fix the link line instead,
+        - If you need to add sanitizer-related options like "-fsanitize=address, undefined", add them to the compilation command (but be aware of the availability of the compilation command,hat is, DO NOT add them if they are not necessary).
         unless those calls violate the internal/external rules above.
 
         10) Fuzzing Behavior Must Be Preserved
@@ -738,6 +714,7 @@ PHASED_FEEDBACK_IMPROVE_PROMPT = """
 
             aflgo-clang -g -O2 a.c -o a.out $(pkg-config --cflags --libs XXX)
 
+        - If you need to add sanitizer-related options like "-fsanitize=address, undefined", add them to the compilation command (but be aware of the availability of the compilation command,hat is, DO NOT add them if they are not necessary).
         - Choose the pkg-config name based on the plan and headers used.
         * If unsure, pick the most reasonable guess based on headers and plan.
 
@@ -761,68 +738,210 @@ PHASED_FEEDBACK_IMPROVE_PROMPT = """
         - DO NOT output anything other than this JSON object.
         """
 
+CVE_RULES_GENERATE_PROMPT = """
+        You are helping build structured reproduction priors for vulnerability reproduction automation.
+
+        Return ONLY a single JSON object (NO markdown, NO extra text) with EXACTLY one top-level key: "%s".
+
+        The value must be a CVE rule entry for cve_rules.json with the following fields:
+        {
+            "lib_name": "<string or empty>",
+            "target_func": "<string or empty>",
+            "bug_class": "<one of: unknown|null_deref|uaf|oob_read|oob_write|overflow|assert|other>",
+            "must_contain": ["..."],
+            "must_avoid": ["..."],
+            "encourage": ["..."],
+            "input_model": {
+                "layout": "<string, e.g. pattern|xml|flags|other>",
+                "critical_fields": ["<field1>", "<field2>"],
+                "pattern_kind": "<text|bytes|unknown>",
+                "templates": ["..."],
+                "mutation_knobs": ["..."]
+            },
+            "repro_oracle": {
+                "signal": ["crash", "asan_segv", "null_deref", "..."],
+                "differential": <true|false>
+            },
+            "touchpoints": {
+                "files": ["..."],
+                "functions": ["..."],
+                "tokens": ["..."]
+            },
+            "notes": "<short>"
+        }
+
+        Rules:
+        - Do NOT invent facts not supported by intel. If unsure, keep conservative/empty.
+        - Prefer actionable constraints only if clearly supported.
+        - templates should be short and representative (0..12 items), may be empty.
+
+        Context:
+        - cve_id: %s
+        - lib_name: %s
+        - target_func: %s
+
+        INTEL (patch/advisory/poc/notes):
+        %s
+        """
 
 # CODE_GENERATE_PROMPT = """
-#         You are an expert in fuzz testing, and you are testing an open-source library called %s.
-#         Please write a fuzz harness that triggers the target function named "%s" in this library.
+#         You are an expert in fuzz testing and C programming, and you are testing an open-source library called %s.
+#         Your goal is to generate a high-quality AFL/AFLGo fuzz harness that triggers the target function named "%s" and reaches the target bug point. The purpose of this harness is to verify and reproduce a specific bug(or vulnerability) within this library through fuzzing.
+#         IMPORTANT: The harness should be fuzzable: mutated fuzz inputs must meaningfully influence control-flow and data reaching the bug point. Avoid harness logic that trivially forces reachability independent of input.
 
-#         To help you generate a high-quality and semantically valid harness, here is a structured plan derived from static analysis and program understanding:
-        
-#         **
-#         ATTENTION! Your primary task is to write an API that covers as many of the provided call chains as possible, \
-#             while ensuring the logical soundness and usability of the entire fuzz driver so that fuzzers like AFLGO can fuzz to the target location more quickly.
-#         **
+#         In THIS PHASE, you MUST NOT write the harness from scratch.
+#         Instead, you are given:
 
-#         === Static Analysis Data (JSON) ===
+#         1) Source code of the target function and snippets of the target bug point.
+#         2) A detailed static analysis PLAN (JSON) for the target call chain.
+#         3) A pre-generated SKELETON (JSON) that already contains:
+#         - a complete C fuzz driver skeleton,
+#         - AFL/AFLGo loop and file-input handling,
+#         - and a placeholder region marked by:
+#             @@CHAIN_LOGIC_BEGIN@@
+#                 // chain logic to be generated here
+#             @@CHAIN_LOGIC_END@@
+
+#         Your task is to:
+#         - Start from the given skeleton_code.
+#         - ONLY replace the code between @@CHAIN_LOGIC_BEGIN@@ and @@CHAIN_LOGIC_END@@.
+#         - Keep EVERYTHING outside that region unchanged (includes, main(), __AFL_LOOP fallback, file reading, init/cleanup patterns, etc.).
+#         - Inside the placeholder region, implement the call-chain logic that uses as many functions in the call chain as possible
+#         and correctly calls the target function.
+
+#         ==================== Source Code of The Target Function ====================
+#         ```c
+#         %s
+#         ```
+
+#         ==================== Code Snippets of The Target Bug Point ====================
+#         ```text
+#         %s
+#         ```
+
+#         ==================== Static Analysis PLAN (JSON) ====================
 #         %s
 
-#         This JSON object provides in-depth static analysis information, including:
-#         - `chain`: a call chain from the root API to the target function (ordered from top-level to target);
-#         - `nodes`: detailed function signatures, source locations, preconditions, required initialization patterns and SPECIFIC IMPLEMENTATION for each function in the chain;
-#         - `resources`: allocation and release operations associated with each function;
-#         - `lifecycle_plan`: alloc/free, init/cleanup steps that should be followed to maintain a valid program state;
-#         - `bitmask_bundles` and `preconditions`: flag constraints, runtime checks, or conditional guards that may affect valid inputs;
-#         - `harness_hint`: suggested default arguments, flag combinations, or parameter mapping inferred from analysis.
+#         This JSON object provides:
+#         - "chain": a call chain from the root API to the target function (ordered from top-level to target).
+#         - "nodes": detailed function signatures, source locations, preconditions, required initialization patterns and specific implementation hints.
+#         - Each node may have a "visibility" field:
+#             * "external": safe to call from a harness.
+#             * "internal": static or internal helper; MUST NOT be called directly from the harness.
+#         - "external_chain": an ordered list of external APIs that should be preferred as the explicit call sequence in the harness.
+#         - "resources": allocation and release operations associated with each function.
+#         - "lifecycle_plan": alloc/free, init/cleanup steps that should be followed to maintain a valid program state.
+#         - "bitmask_bundles" and "preconditions": flag constraints, runtime checks, or conditional guards that may affect valid inputs.
+#         - "harness_hint": suggested default arguments, flag combinations, or parameter mappings.
 
-#         === Output Format Requirements (STRICT) ===
-#         Return pure JSON with exactly two properties:
+#         ==================== SKELETON & API USAGE INFO (JSON) ====================
+#         %s
+
+#         This JSON object provides:
+#         - "skeleton_code": a complete C fuzz driver that:
+#             * defines main(),
+#             * reads fuzz input from argv[1] into a heap buffer,
+#             * contains a persistent AFL loop with a safe fallback,
+#             * and has @@CHAIN_LOGIC_BEGIN@@ / @@CHAIN_LOGIC_END@@ placeholders.
+#         - "compile_command_hint": a plausible aflgo-clang compile command template.
+#         - "api_usage_snippets": realistic C usage examples for each API in the call chain.
+#         - "doc_summaries": short documentation-style descriptions for each API.
+
+#         ==================== YOUR TASK (STRICT) ====================
+
+#         You MUST:
+
+#         1. Use the skeleton_code as the base.
+#         - Do NOT change:
+#             * the __AFL_LOOP fallback macro,
+#             * the way argv[1] is read and the buffer is allocated,
+#             * the overall structure of main(),
+#             * global init/cleanup patterns that are already present (e.g., xmlInitParser/xmlCleanupParser),
+#             * error-handling and cleanup code outside the placeholder region.
+
+#         2. ONLY modify the code between:
+#         @@CHAIN_LOGIC_BEGIN@@
+#         @@CHAIN_LOGIC_END@@
+
+#         - Replace the placeholder comments with concrete C code that:
+#             * follows the call chain in "chain" (from root to target) as much as possible,
+#             * uses functions in "external_chain" as the primary explicit call sequence,
+#             * respects the function signatures and preconditions in "nodes",
+#             * respects resource usage in "resources" and "lifecycle_plan",
+#             * uses realistic patterns from "api_usage_snippets" when calling each API.
+#         - You MAY declare local variables inside this region if needed.
+#         - You MUST NOT redefine any functions whose names appear in the call chain.
+
+#         3. External vs internal APIs:
+#         - You MAY ONLY call functions that satisfy at least one of:
+#             * they appear in "external_chain", OR
+#             * the corresponding node has visibility == "external".
+#         - For any node whose visibility == "internal":
+#             * DO NOT call it directly from the harness.
+#             * DO NOT declare a prototype or stub with the same name.
+#             * Treat its "preconditions" and implementation hints as constraints on how
+#                 to prepare arguments for surrounding external APIs.
+
+#         - You MUST NOT:
+#             * create fake stubs for internal/static functions in order to make calls compile;
+#             * cast opaque library context pointers to custom structs just to access internal fields.
+
+#         4. Target function and AFLGo marker:
+#         - Identify the target function "%s" in the call chain.
+#         - Immediately BEFORE the line that calls the target function, insert the AFLGo marker, for example:
+
+#             volatile int afl_target = 0;
+#             afl_target++;
+
+#         - Then call the target function using correctly prepared arguments (derived from earlier steps in the chain).
+
+#         5. Call chain coverage:
+#         - Attempt to call as MANY functions from the call chain as possible in logical order.
+#         - Prefer to follow the order given by "external_chain" for explicit calls.
+#         - Use the static analysis plan to propagate objects/handles between calls:
+#             * e.g., a doc or context created earlier should be reused by later APIs in the chain.
+#         - Use "bitmask_bundles" and "harness_hint.param_defaults" to choose reasonable default flags/options,
+#             while still allowing fuzz input to influence buffers, lengths, and sometimes options.
+
+#         6. Fuzz input influence:
+#         - Place operations like fopen outside the __AFL_LOOP loop, not inside it, to avoid slowing down the process.
+#         - Ensure that fuzz input (the buffer read from argv[1] and its size) meaningfully influences:
+#             * the data parsed into the library (e.g., XML/JSON/text),
+#             * or configuration / options where appropriate.
+#         - Do NOT ignore the fuzz buffer; it should flow into the library through the root/early APIs.
+
+#         7. Safety & cleanup:
+#         - Do NOT introduce printf/logging; focus on consuming fuzz input and driving the call chain.
+#         - Do NOT introduce network I/O.
+#         - Ensure all resources allocated in the chain-logic region are properly released before leaving the loop iteration,
+#             following "resources" and "lifecycle_plan" (e.g., free docs, contexts, buffers, validators).
+
+#         ==================== BUILD REQUIREMENTS (STRICT) ====================
+
+#         - The final harness MUST be valid C code.
+#         - It MUST still read fuzz input from argv[1] (as implemented in the skeleton).
+#         - It MUST still use a persistent fuzzing loop: while (__AFL_LOOP(10000)) { ... }.
+#         - The compile command MUST follow the pattern:
+
+#             aflgo-clang -g -O2 a.c -o a.out $(pkg-config --cflags --libs XXX)
+
+#         Replace XXX with the correct pkg-config name for the target library (e.g., "libxml-2.0")
+#         If you need to add sanitizer-related options like "-fsanitize=address, undefined", add them to the compilation command (but be aware of the availability of the compilation command,hat is, DO NOT add them if they are not necessary).
+#         if this can be inferred from the plan or skeleton; otherwise, give your best guess.
+
+#         ==================== OUTPUT FORMAT (STRICT JSON) ====================
+
+#         Return a single JSON object with exactly two properties:
+
 #         {
-#         "code": "<the complete fuzz harness C source>",
+#         "code": "<the COMPLETE C source of the fuzz harness, based on skeleton_code, with the @@CHAIN_LOGIC@@ region filled in>",
 #         "compile_command": "<the compile command>"
 #         }
-#         **ATTENTION! No Markdown, no extra text, just JSON.**
 
-#         You must use this plan to reason about:
-#         1. How to correctly initialize objects or structures before invoking the target function.
-#         2. How to allocate and release resources following the `lifecycle_plan` and `resources` hints.
-#         3. How to call **AS MANY FUNCTIONS from the CALL CHAIN AS POSSIBLE**, in order, with correct data dependencies.
-#         4. Which parameters are influenced by fuzz input (buffers, sizes, configuration, file content).
-#         5. How to propagate data/handles between chained calls (e.g., return values or pointers).
-
-#         === Functional Requirements (STRICT) ===
-#         1) Input:
-#         - Read fuzz input from a file path provided at argv[1] (AFL/AFLGo @@).
-#         - Allocate a buffer and read the entire file into memory.
-
-#         2) Fuzzing Loop:
-#         - Use a persistent loop: `while (__AFL_LOOP(10000)) { ... }`.
-
-#         === Build Requirements (STRICT) ===
-#         - The harness must compile using aflgo-clang/aflgo-clang++.
-#         - The compile command format MUST be:
-#             aflgo-clang -g -O2 a.c -o a.out $(pkg-config --cflags --libs XXX)
-#         Replace `XXX` with the correct pkg-config name for the target library when it is known from the plan (e.g., `libxml-2.0`).
-#         - The source file name MUST be `a.c`, and the output executable name MUST be `a.out`.
-
-#         Checklist before you output:
-#         - Reads input from argv[1] into a heap buffer.
-#         - Includes all necessary headers (consider stdint.h, unistd.h, fcntl.h, sys/stat.h as needed).
-#         - Uses memory-based APIs rather than file/network I/O when possible.
-#         - When calling APIs, it is necessary to ensure the LOGICAL RATIONALITY of the entire program.
-#         - Drives streaming/reader loops so that the target function is actually exercised.
-#         - Satisfies required preconditions and cleans up all resources on all paths.
-#         - Places the AFL target marker immediately before the target function call.
-#         - Builds successfully with the specified compile command.
+#         ATTENTION:
+#         - "code" MUST contain the full C source (not just the @@CHAIN_LOGIC@@ region).
+#         - Do NOT use Markdown formatting.
+#         - Do NOT include any extra fields or text outside this JSON object.
 #         """
 
 

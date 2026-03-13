@@ -6,7 +6,7 @@ import logging
 import colorlog
 
 from pathlib import Path
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Tuple
 #from ..batch.batch_class import Batch
 
 
@@ -116,3 +116,77 @@ def get_path_in_src(subfolder: str, filename: str) -> str:
 def get_parent_dir(path: str) -> str:
     p = Path(path)
     return str(p.parent)
+
+def parse_target_file(target_path: str, plan: Dict, target_func: str) -> List[Tuple[str, int]]:
+    out : List[Tuple[str, int]] = []
+    nodes = plan.get("chain", {}).get("nodes", {})
+    for n in nodes:
+        if n.get("name", "") == target_func:
+            file_path = n.get("impl", {}).get("file", "")
+
+    p = Path(target_path)
+    if not p.is_file():
+        return out
+    
+    for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = raw.strip()
+        if not s or s.startswith("#"):
+            continue
+        if ":" not in s:
+            continue
+        _, ln = s.split(":", 1)
+        try:
+            out.append((file_path, int(ln.strip())))
+        except Exception:
+            continue
+
+    return out
+
+def extract_target_func_code_from_plan(plan: Dict, target_func: str) -> str:
+    nodes = plan.get("chain", {}).get("nodes", {})
+    for n in nodes:
+        if n.get("name", "") == target_func:
+            source_code = n.get("impl", {}).get("code", "")
+            return source_code
+
+def load_source_snippet(file_path: str, line: int, context: int = 3) -> str:
+    try:
+        p = Path(file_path)
+        if not p.is_file():
+            return ""
+        lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+        if line <= 0:
+            line = 1
+        start = max(1, line - context)
+        end = min(len(lines), line + context)
+        snippet_lines = lines[start - 1 : end]
+
+        numbered = [
+            f"{start + i:6d}: {snippet_lines[i]}" for i in range(len(snippet_lines))
+        ]
+        header = f"{file_path}:L{start}-L{end}"
+        return header + "\n" + "\n".join(numbered)
+    except Exception as e:
+        return ""
+
+
+def clip_text(text: str, max_chars: int = 4000) -> str:
+    text = text or ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n...[truncated]..."
+
+def copy_seeds_provided_by_user(src_dir: Path, dest_dir: Path) -> bool:
+    if not src_dir.exists() or not src_dir.is_dir():
+        return False
+    
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    for item in src_dir.iterdir():
+        target = dest_dir / item.name
+        if item.is_dir():
+            continue
+        else:
+            shutil.copy2(item, target)
+
+    return True

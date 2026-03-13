@@ -1,4 +1,3 @@
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +11,7 @@ typedef enum {
   TRACE_EVT_FUNC_EXIT = 1,
   TRACE_EVT_BRANCH = 2,
   TRACE_EVT_CALL = 3,
+  TRACE_EVT_MARKER = 4,
 } trace_event_kind_t;
 
 typedef struct {
@@ -32,6 +32,7 @@ void trace_branch(uint32_t module_id, uint32_t func_id, uint32_t branch_id,
                   int cond_true);
 void trace_call_edge(uint32_t module_id, uint32_t from_func_id,
                      uint32_t to_func_id, uint32_t call_id);
+void trace_marker(uint32_t module_id, uint32_t func_id, uint32_t marker_id);
 
 static NO_INSTRUMENT void trace_runtime_flush(void) __attribute__((destructor));
 
@@ -95,6 +96,17 @@ NO_INSTRUMENT void trace_call_edge(uint32_t module_id, uint32_t from_func_id,
   trace_record_event(ev);
 }
 
+NO_INSTRUMENT void trace_marker(uint32_t module_id, uint32_t func_id,
+                                uint32_t marker_id) {
+  trace_event_t ev;
+  ev.kind = TRACE_EVT_MARKER;
+  ev.module_id = module_id;
+  ev.func_id = func_id;
+  ev.aux_id = marker_id;
+  ev.aux_val = 0;
+  trace_record_event(ev);
+}
+
 static NO_INSTRUMENT void trace_runtime_flush(void) {
   const char *out = getenv("TRACE_RUNTIME_OUTPUT");
   if (!out || !*out)
@@ -120,3 +132,6 @@ static NO_INSTRUMENT void trace_runtime_flush(void) {
 
   fclose(f);
 }
+
+// clang -fPIC -c trace_runtime.c -o trace_runtime.o
+// ar rcs trace_runtime.a trace_runtime.o
