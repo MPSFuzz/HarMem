@@ -171,8 +171,11 @@ CODE_GENERATE_PROMPT = Template("""
         - input_layout_summary
         - api_usage_snippets
         - doc_summaries
-
+        ==================== CVE(or bug) Hints ====================
         ${cve_hints_block}
+        
+        This block provide a structured summary of the CVE-aware(or bug) constraints relevant to the vulnerability, which include some essential aspects that the generated harness MUST follow to have a practical chance of reproducing the bug
+        
         ==================== YOUR TASK ====================
 
         You MUST generate a COMPLETE, COMPILABLE harness in C or C++ in JSON form.
@@ -190,10 +193,11 @@ CODE_GENERATE_PROMPT = Template("""
         1. Use the provided skeleton_code as the base harness.
         2. Keep global structure, AFL loop, argv[1] file reading, and outer init/cleanup patterns compatible with the skeleton.
         3. Replace or refine the @@CHAIN_LOGIC_BEGIN@@ / @@CHAIN_LOGIC_END@@ region with concrete bug-oriented chain logic.
-        4. Respect the static plan, but do NOT stop at generic API invocation.
-        5. If CVE-aware constraints indicate multiple semantic input roles, preserve them in code.
-        6. If the bug depends on specific schema constructs, parser options, object states, call ordering, or XPath/AST/format structure, implement those concretely.
-        7. Treat bug-relevant deeper touchpoints as important internal reachability targets even if the externally callable target API is ${target_func}.
+        4. Eliminate unnecessary fallback checks and ensure that fuzz input covers the critical parts that affect vulnerability (or bug) triggering.
+        5. Respect the static plan, but do NOT stop at generic API invocation.
+        6. If CVE-aware constraints indicate multiple semantic input roles, preserve them in code.
+        7. If the bug depends on specific schema constructs, parser options, object states, call ordering, or XPath/AST/format structure, implement those concretely.
+        8. Treat bug-relevant deeper touchpoints as important internal reachability targets even if the externally callable target API is ${target_func}.
 
         External vs internal behavior:
 
@@ -284,17 +288,6 @@ HARNESS_FIX_PROMPT = """
         - Do NOT include Markdown, explanations, comments about your changes, or any extra fields.
         - Do NOT output anything other than this JSON object.
 
-        ==================== Static Analysis Data (JSON) ====================
-        %s
-
-        The static analysis plan may include:
-        - chain: ordered call chain from root API to target.
-        - nodes: each node has name, signature, preconditions, and possibly "visibility":
-            * "external": safe to call from a harness.
-            * "internal": static/internal helper; MUST NOT be called directly from the harness.
-        - external_chain: preferred sequence of external APIs.
-        - resources, lifecycle_plan, bitmask_bundles, harness_hint, etc.
-
         ==================== Current Harness Code ====================
         %s
 
@@ -364,7 +357,7 @@ HARNESS_FIX_PROMPT = """
 
         6) Handling Missing Declarations / Headers
         - If a function, type, or macro is undeclared:
-        * First, add the appropriate PUBLIC header (e.g., <libxml/parser.h>, <libxml/xmlreader.h>).
+        * First, add the appropriate PUBLIC header.
         * Use PUBLIC headers of the library, not private/internal headers whenever possible.
         - You may add forward declarations for structs or enums when necessary, but:
         * NEVER reimplement or stub any function whose name appears in the call chain or as the target.
@@ -384,8 +377,6 @@ HARNESS_FIX_PROMPT = """
         - If variables like ctx, doc, reader, schema, etc. are undeclared:
         * Infer their likely type and initialization pattern from the PLAN JSON and existing code.
         * Declare them with safe, minimal initializations consistent with typical usage.
-        * Example:
-            xmlDocPtr doc = xmlReadMemory(buffer, size, "fuzz.xml", NULL, XML_PARSE_RECOVER);
         - Do NOT introduce arbitrary complex logic; keep initialization simple and safe.
 
         9) Linker Errors (Undefined References)
@@ -784,6 +775,84 @@ CVE_RULES_GENERATE_PROMPT = """
         %s
         """
 
+STRUCTURAL_REFINE_PROMPT = Template("""
+        You are an expert in fuzz harness engineering for vulnerability reproduction.
+
+        Your task is to perform a LIMITED structural refinement of an existing harness before fuzzing begins.
+
+        **The harnesses provided below are designed to reproduce a specific cve or bug.**
+
+        IMPORTANT:
+
+        - Do NOT rewrite the harness from scratch.
+        - Do NOT redesign the overall input model unless explicitly allowed.
+        - Do NOT remove the target API call.
+        - Do NOT collapse semantic roles that must be preserved.
+        - Do NOT output explanations.
+        - Your entire reply MUST be a single valid JSON object and nothing else.
+
+        ==================== Existing Harness ====================
+
+        ${harness_code}
+
+        ==================== CVE(or bug) Hints (the harness wants to reproduce) ====================
+
+        ${cve_hints_obj}
+
+        ==================== Phase-A Context ====================
+        ${phase_a_context_json}
+
+        ==================== Structural Guidance ====================
+        ${guidance_json}
+
+
+        ==================== Task ====================
+
+        You must apply a conservative, localized structural repair.
+
+        Goals:
+
+        1. Preserve the high-value properties listed under "preserve".
+        2. Avoid or reduce the risks listed under "avoid".
+        3. Apply only the localized changes listed under "adjust".
+        4. Respect all "do_not_touch" constraints.
+        5. Only act on issues that are marked as repairable and have medium/high confidence.
+        6. Prefer reducing over-heavy fallback / fixed-template masking over changing the high-level architecture.
+        7. Preserve target data dependency.
+        8. Preserve semantic role separation when present.
+
+        You MAY:
+
+        - Eliminate unnecessary fallback checks and ensure that fuzz input covers the critical parts that affect vulnerability (or bug) triggering.
+        - reduce excessive fixed-template substitution
+        - strengthen input influence on objects that reach the target call
+        - make local structural edits near parsing/build/target-invocation logic
+
+        You MUST NOT:
+
+        - rewrite the entire harness
+        - replace the current semantic layout with a completely different one
+        - remove the fuzz loop
+        - remove the target API call
+        - erase bug-relevant object construction paths
+
+        ==================== Output format ====================
+        Return exactly one JSON object(ONLY the JSON, no markdown, no explanations) with exactly two fields:
+        {
+        "code": "<refined complete harness source code>",
+        "compile_command": "<compile command>"
+        }
+                                    
+        - The compile command MUST follow the pattern :
+            * use aflgo-clang (or afl-clang-fast/afl-clang) as the compiler,
+            * refer to the harness file as a.c and the output as a.out, e.g.:
+
+            aflgo-clang -g -O2 a.c -o a.out $$(pkg-config --cflags --libs XXX)
+            Replace XXX with the correct pkg-config name for the target library (e.g., "libxml-2.0")
+    """)
+
+
+
 # CODE_GENERATE_PROMPT = """
 #         You are an expert in fuzz testing and C programming, and you are testing an open-source library called %s.
 #         Your goal is to generate a high-quality AFL/AFLGo fuzz harness that triggers the target function named "%s" and reaches the target bug point. The purpose of this harness is to verify and reproduce a specific bug(or vulnerability) within this library through fuzzing.
@@ -986,3 +1055,15 @@ CVE_RULES_GENERATE_PROMPT = """
         
 #         In addition, your answer can ONLY be what I asked, no other explanatory content.
 # """
+
+
+        # ==================== Static Analysis Data (JSON) ====================
+        # %s
+
+        # The static analysis plan may include:
+        # - chain: ordered call chain from root API to target.
+        # - nodes: each node has name, signature, preconditions, and possibly "visibility":
+        #     * "external": safe to call from a harness.
+        #     * "internal": static/internal helper; MUST NOT be called directly from the harness.
+        # - external_chain: preferred sequence of external APIs.
+        # - resources, lifecycle_plan, bitmask_bundles, harness_hint, etc.

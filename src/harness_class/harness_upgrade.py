@@ -161,26 +161,26 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
         if total_traces < reach_rate_min_traces:
             mode = "repair"
             logger.info(
-                f"[harness_upgrade] target reach stats: total={total_traces} (<{reach_rate_min_traces}), "
+                f"[harness_upgrade2] target reach stats: total={total_traces} (<{reach_rate_min_traces}), "
                 f"reach_rate={reach_rate:.3f}. Use REPAIR prompt by default."
             )
         elif reach_rate >= reach_rate_micro_threshold:
             mode = "micro_upgrade"
             logger.info(
-                f"[harness_upgrade] target reach stats: total={total_traces}, reach_rate={reach_rate:.3f} "
+                f"[harness_upgrade2] target reach stats: total={total_traces}, reach_rate={reach_rate:.3f} "
                 f">= {reach_rate_micro_threshold}. Use MICRO-TUNE prompt."
             )
         elif reach_rate <= reach_rate_repair_threshold:
             mode = "repair"
             logger.info(
-                f"[harness_upgrade] target reach stats: total={total_traces}, reach_rate={reach_rate:.3f} "
+                f"[harness_upgrade2] target reach stats: total={total_traces}, reach_rate={reach_rate:.3f} "
                 f"<= {reach_rate_repair_threshold}. Use REPAIR prompt."
             )
         else:
             #mode = "repair"
             mode = "micro_upgrade"
             logger.info(
-                f"[harness_upgrade] target reach stats (grey-zone): total={total_traces}, reach_rate={reach_rate:.3f} in grey-zone "
+                f"[harness_upgrade2] target reach stats (grey-zone): total={total_traces}, reach_rate={reach_rate:.3f} in grey-zone "
                 f"({reach_rate_repair_threshold}, {reach_rate_micro_threshold}). Use MICRO-TUNE prompt."
             )
         
@@ -205,7 +205,7 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             _clean_up_seed_files(baseline_seeds_path)
             upgrade_flag = _save_modified_seeds(seeds_content)
             if upgrade_flag:
-                logger.info(f"[Harness_upgrade] Seeds upgrade success for root api {root_api} in function {batch.target_func}")
+                logger.info(f"[Harness_upgrade2] Seeds upgrade success for root api {root_api} in function {batch.target_func}")
                 
                 # terminate the ongoing fuzzing process for this root_api
                 pid = batch.fuzzer_pids.get(root_api, None)
@@ -213,10 +213,10 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
                     _kill_fuzz_process(pid, code_save_folder)
                 
                 if start_fuzzing(batch=batch, selected_root_api=root_api):
-                    logger.info(f"[Harness_upgrade] Upgrade seeds and restarted fuzzing process for upgraded seeds of root API {root_api}")
+                    logger.info(f"[Harness_upgrade2] Upgrade seeds and restarted fuzzing process for upgraded seeds of root API {root_api}")
                     return True
                 else:
-                    logger.error(f"[Harness_upgrade] Failed to restart fuzzing process for upgraded seeds of root API {root_api}")
+                    logger.error(f"[Harness_upgrade2] Failed to restart fuzzing process for upgraded seeds of root API {root_api}")
                     return False
             
             return True
@@ -239,14 +239,14 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
                 fix_count += 1
             
             if ava_flag == True:
-                logger.info(f"[Harness_upgrade] Harness upgrade success for root api {root_api} in function {batch.target_func}")
+                logger.info(f"[Harness_upgrade2] Harness upgrade success for root api {root_api} in function {batch.target_func}")
 
                 # Restart the fuzz process for this root_api
                 if start_fuzzing(batch=batch, selected_root_api=root_api):
-                    logger.info(f"[Harness_upgrade] Upgrade harness and restarted fuzzing process for upgraded harness of root API {root_api}")
+                    logger.info(f"[Harness_upgrade2] Upgrade harness and restarted fuzzing process for upgraded harness of root API {root_api}")
                     return True
                 else:
-                    logger.error(f"[Harness_upgrade] Failed to restart fuzzing process for upgraded harness of root API {root_api}")
+                    logger.error(f"[Harness_upgrade2] Failed to restart fuzzing process for upgraded harness of root API {root_api}")
                     return False
                 
         elif type == "modified_seeds_and_harness":
@@ -257,9 +257,9 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             upgrade_flag = _save_modified_seeds(seeds_content)
 
             if upgrade_flag:
-                logger.info(f"[Harness_upgrade] Seeds upgrade success for root api {root_api} in function {batch.target_func}")
+                logger.info(f"[Harness_upgrade2] Seeds upgrade success for root api {root_api} in function {batch.target_func}")
             else:
-                logger.error(f"[Harness_upgrade] Seeds upgrade or save failed for root api {root_api} in function {batch.target_func}")
+                logger.error(f"[Harness_upgrade2] Seeds upgrade or save failed for root api {root_api} in function {batch.target_func}")
                 return False
 
             # terminate the ongoing fuzzing process for this root_api
@@ -279,14 +279,14 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
                 fix_count += 1
             
             if ava_flag == True:
-                logger.info(f"[Harness_upgrade] Harness upgrade success for root api {root_api} in function {batch.target_func}")
+                logger.info(f"[Harness_upgrade2] Harness upgrade success for root api {root_api} in function {batch.target_func}")
 
                 # Restart the fuzz process for this root_api
                 if start_fuzzing(batch=batch, selected_root_api=root_api):
-                    logger.info(f"[Harness_upgrade] Upgrade harness and restarted fuzzing process for upgraded harness of root API {root_api}")
+                    logger.info(f"[Harness_upgrade2] Upgrade harness and restarted fuzzing process for upgraded harness of root API {root_api}")
                     return True
                 else:
-                    logger.error(f"[Harness_upgrade] Failed to restart fuzzing process for upgraded harness of root API {root_api}")
+                    logger.error(f"[Harness_upgrade2] Failed to restart fuzzing process for upgraded harness of root API {root_api}")
                     return False
                 
     else:
@@ -317,14 +317,14 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             fix_count += 1
         
         if ava_flag == True:
-            logger.info(f"[Harness_upgrade] Harness upgrade success for root api {root_api} in function {batch.target_func}")
+            logger.info(f"[Harness_upgrade1] Harness Upgrade1 success for root api {root_api} in function {batch.target_func}")
 
             # Restart the fuzz process for this root_api
             if start_fuzzing(batch=batch, selected_root_api=root_api):
-                logger.info(f"[Harness_upgrade] Upgrade harness and restarted fuzzing process for upgraded harness of root API {root_api}")
+                logger.info(f"[Harness_upgrade1] Upgrade harness and restarted fuzzing process for upgraded harness of root API {root_api}")
                 return True
             else:
-                logger.error(f"[Harness_upgrade] Failed to restart fuzzing process for upgraded harness of root API {root_api}")
+                logger.error(f"[Harness_upgrade1] Failed to restart fuzzing process for upgraded harness of root API {root_api}")
                 return False
 
 if __name__ == "__main__":

@@ -209,8 +209,8 @@ class LLM:
     def harness_fix(self, h: harness) -> harness:
         for attempt in range(1, self.max_retries + 1):
             try:
-                fix_prompt = HARNESS_FIX_PROMPT % (self.plan, h.code, h.compile_command, h.compile_result)
-                #fix_prompt = HARNESS_FIX % (h.code, h.compile_command, h.compile_result)
+                # fix_prompt = HARNESS_FIX_PROMPT % (self.plan, h.code, h.compile_command, h.compile_result)
+                fix_prompt = HARNESS_FIX_PROMPT % (h.code, h.compile_command, h.compile_result)
 
                 response = openai.chat.completions.create(
                     model= self.model,
@@ -524,3 +524,47 @@ class LLM:
         timeout=self.timeout
     )
         return response.choices[0].message.content
+    
+    def structural_refine_harness(self, h: harness, guidance: Dict[str, Any], cve_hints_obj: Dict[str, Any], phase_a_context: Dict[str, Any]):
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                refine_prompt = STRUCTURAL_REFINE_PROMPT.substitute(
+                    harness_code=h.code,
+                    cve_hints_obj=json.dumps(cve_hints_obj, indent=2, ensure_ascii=False),
+                    phase_a_context_json=json.dumps(phase_a_context, indent=2, ensure_ascii=False),
+                    guidance_json=json.dumps(guidance, indent=2, ensure_ascii=False),
+                )
+
+                response = openai.chat.completions.create(
+                    model=self.model,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": refine_prompt,
+                            }
+                        ],
+                    }],
+                    temperature=0.2,
+                    top_p=1,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    timeout=self.timeout,
+                )
+
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
+                content = json.loads(result)
+
+                h.code = content["code"]
+                h.compile_command = content["compile_command"]
+                return h
+
+            except Exception as e:
+                logger.warning(f"[Warning] structural_refine_harness attempt {attempt} failed: {e}")
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.error("[Error] structural_refine_harness failed after max retries")
+                    return None

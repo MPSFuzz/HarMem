@@ -10,9 +10,6 @@ from src.llm.LLM_class import LLM
 from src.llm.build_phase_A_context import build_phase_A_context
 from src.static_analyze.aggregator import aggregate_for_chain
 from src.static_analyze.extract_call_chain import extract_target_call_chain, get_root_apis, load_call_graph
-from src.harness_analysis import analyze_harness_structure
-from src.cve_helper.constraint_model import build_generation_constraints
-from src.harness_class.harness_structural_refine import structural_refine_harness
 from src.utils.utils import *
 
 logger = get_logger(__name__)
@@ -61,7 +58,7 @@ def _process_root_api(root_api, llm_global: LLM, call_chain, cve_hints_obj = Non
     timeout=llm_global.timeout,
     )
 
-    llm.get_cve_hints(cve_hints_obj)
+    llm.cve_hints = cve_hints_obj or {}
 
     llm.get_phase_A_context(phase_A_context)
     llm.get_harness_plan(plan)
@@ -71,27 +68,6 @@ def _process_root_api(root_api, llm_global: LLM, call_chain, cve_hints_obj = Non
     
     llm.generate_code(h, call_chain)
     # _global_vars.fuzz_commands[root_api] = h.start_fuzzing_command
-
-    if cve_hints_obj is not None:
-        try:
-            constraints = build_generation_constraints(plan, phase_A_context, cve_hints_obj)
-
-            analysis_result = analyze_harness_structure(code = h.code, target_api=llm.target_func, constraints=constraints)
-
-            refine_result = structural_refine_harness(
-            llm=llm,
-            h=h,
-            plan=plan,
-            phase_a_context=phase_A_context,
-            cve_hints_obj=cve_hints_obj or {},
-            max_rounds=1,
-            )
-            
-            logger.info(
-            f"[structural-refine-result] root_api={root_api}, accepted={refine_result['accepted']}")
-        
-        except Exception as e:
-            logger.warning(f"Structural analyzer/refine failed for root api {root_api}: {e}")
 
     fix_count = 0
 
