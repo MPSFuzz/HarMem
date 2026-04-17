@@ -3,6 +3,7 @@ import subprocess
 import os
 import time
 import multiprocessing
+import re
 import concurrent.futures
 
 from src.utils import _global_vars
@@ -18,6 +19,9 @@ from src.utils.utils import *
 logger = get_logger(__name__)
 
 def get_target_func_location(func_dir: str, target_func: str) -> list: #获得包含目标函数的源文件
+    match = re.match(r'^([^_]+)', target_func)
+    target_func = match.group(1) if match else target_func
+
     try:
         #cp_command = ["cp", f"./scripts/get_target_func_location.sh", f"/{func_dir}/get_target_func_location.sh"]
         cp_command = ["cp", get_path_in_src("scripts", "get_target_func_location.sh"), f"/{func_dir}/get_target_func_location.sh"]
@@ -142,23 +146,23 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
     _global_vars.root_api_and_call_chain = extract_target_call_chain(graph=graph, target_func=target_func, root_apis=filtered_entry_apis)
     
     # [quick test] >>>
-    test_set = {k: v for i, (k,v) in enumerate(_global_vars.root_api_and_call_chain.items()) if i < 2}
+    test_set = {k: v for i, (k,v) in enumerate(_global_vars.root_api_and_call_chain.items()) if i < 3}
     # <<<
 
     cpu_counts = multiprocessing.cpu_count()
     logger.debug(f"CPU counts: {cpu_counts}")
 
     with concurrent.futures.ProcessPoolExecutor(max_workers = min(cpu_counts, len(_global_vars.root_api_and_call_chain))) as executor:
-        futures = [
-            executor.submit(_task, root_api, call_chain, compile_commands_path)
-            for root_api, call_chain in _global_vars.root_api_and_call_chain.items()
-        ]
-
-        # # [quick test] TODO: disable this block after test >>>
         # futures = [
         #     executor.submit(_task, root_api, call_chain, compile_commands_path)
-        #     for root_api, call_chain in test_set.items()
+        #     for root_api, call_chain in _global_vars.root_api_and_call_chain.items()
         # ]
+
+        # # [quick test] TODO: disable this block after test >>>
+        futures = [
+            executor.submit(_task, root_api, call_chain, compile_commands_path)
+            for root_api, call_chain in test_set.items()
+        ]
         # # <<<
 
         for future in concurrent.futures.as_completed(futures):
@@ -177,22 +181,20 @@ def get_available_harness(lib_name: str, source_dir: str, dot_file: str, target_
     logger.info(f"Saved harness plans to {plan_save_path}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        # # [quick test] TODO: disable this block after test >>>
-        # futures = [
-        #     executor.submit(_process_root_api, root_api, llm, call_chain)
-        #     for root_api, call_chain in test_set.items()
-        # ]
-        # # <<<
-
         futures = []
-        for root_api, call_chain in _global_vars.root_api_and_call_chain.items():
+        # for root_api, call_chain in _global_vars.root_api_and_call_chain.items():
+        #     futures.append(executor.submit(_process_root_api, root_api, llm, call_chain, cve_hints_obj))
+
+        # # [quick test] TODO: disable this block after test >>>
+        for root_api, call_chain in test_set.items():
             futures.append(executor.submit(_process_root_api, root_api, llm, call_chain, cve_hints_obj))
+        # # <<<
 
         for future in concurrent.futures.as_completed(futures):
             root_api, harness_file = future.result()
             if harness_file:
                 _global_vars.root_api_and_harness[root_api] = harness_file
-    
+
     clean_up_harness_file()
 
 if __name__ == "__main__":

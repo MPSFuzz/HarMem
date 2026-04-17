@@ -146,7 +146,7 @@ def fuzzer_stats_analysis(fuzzer_stats: Dict[str, Any], root_api: str, window_mg
     coverage_score = min(bitmap_cvg / 15.0, 1.0) # 15% and above is considered good coverage
 
     # stability analysis
-    if stability < 95.0 or unique_crashes > 0:
+    if stability < 90.0:
         issues.append("unstable_harness_or_target")
         hints.append(f"stability={stability:.2f}%, unique_crahes={unique_crashes};"
                      "This indicates a certain percentage of crashes. Prioritize checking if the harness continues to dereference objects when they are NULL or in an error state."
@@ -160,7 +160,7 @@ def fuzzer_stats_analysis(fuzzer_stats: Dict[str, Any], root_api: str, window_mg
         stability_score = (stability - 80.0) / (95.0 - 80.0)
     
     # depth analysis
-    if execs_done > 10000 and paths_total > 300 and max_depth <= 2:
+    if execs_done > 10000 and paths_total > 300 and max_depth < 2:
         issues.append("shallow_exploration_depth")
         hints.append(
             f"max_depth={max_depth}, paths_total={paths_total}, indicating that most paths are staying at shallow calling depth;"

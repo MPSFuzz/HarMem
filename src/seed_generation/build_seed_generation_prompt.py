@@ -52,9 +52,11 @@ def build_seed_generation_prompt(batch: Batch,
     lines.append("=== Your task and output format (MUST FOLLOW) ===")
     lines.append(
         "Provide several high-quality seeds that can reach the bug(or vulnerability) points under the current harness."
+        "- Ensure the correctness, usability, and high quality of the seeds, DO NOT generate garbled data that has no practical meaning."
         "- You MUST reply with a single JSON object and nothing else.\n"
         "- The JSON structure must be exactly ONE of these forms:\n"
-        " { \"seed1\": \"<FULL seed>\", \"seed2\": \"<FULL seed>\", ... }\n"
+        " { \"seed1\": \"<BASE64 seed bytes>\", \"seed2\": \"<BASE64 seed bytes>\", ... }\n"
+        "- Do NOT return raw seed text; always return base64-encoded content, even for text seeds.\n"
         "- Keep the response compact: avoid unnecessary comments/blank lines while keeping correctness.\n"
         "- Do NOT add any other keys, fields, text, or symbols outside this JSON object.\n"
         "- Do NOT wrap the JSON in code fences. Reply with RAW JSON only."

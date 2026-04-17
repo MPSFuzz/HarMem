@@ -1,6 +1,7 @@
 import time
 import os
 import errno
+import signal
 
 from dataclasses import dataclass
 from enum import auto, Enum
@@ -29,12 +30,13 @@ class EpochConfig:
     coarse_min_sec: int  = 2 * 60
     coarse_max_sec: int = 5 * 60
     fine_min_sec: int = 10 * 60
-    fine_max_sec: int = 20 * 60
+    fine_max_sec: int = 30 * 60
     target_reach_rate_micro_threshold: float = 0.60     # 65% queue cases reach target function
-    target_reach_rate_repair_threshold: float = 0.15   # if reach rate < 20%, consider repairing operation
+    target_reach_rate_repair_threshold: float = 0.15   # if target_func reach rate < 15%, consider repairing operation
     target_reach_rate_min_traces: int  = 10    # need at least 15 traces to consider reach rate
     plateau_k: int = 2            # require at least k points to consider plateau detection
     crash_k: int = 2              # require at least k points to consider process is dead
+    empty_feedback_k: int = 3     # require at least k consecutive empty feedback collections to evict a root_api
 
 class EpochScheduler:
     def __init__(self, config: Optional[EpochConfig]):
@@ -46,6 +48,7 @@ class EpochScheduler:
         #self.last_collect_ts: float = 0.0
         self.last_collect_ts: Dict[str, float] = {}
         self.upgrade_cooldown_until: Dict[str, float] = {}
+        self.empty_feedback_streak: Dict[str, int] = {}
         self.window_mgr = FuzzStatsWindowManager()
     
     def _ensure(self, batch: Batch):
@@ -56,6 +59,7 @@ class EpochScheduler:
             self.plateau_streak.setdefault(root_api, 0)
             self.crash_streak.setdefault(root_api, 0)
             self.last_collect_ts.setdefault(root_api, 0.0)
+            self.empty_feedback_streak.setdefault(root_api, 0)
     
     def _sync_regularized(self, batch: Batch):
         now = time.time()
@@ -65,6 +69,7 @@ class EpochScheduler:
             self.plateau_streak.setdefault(root_api, 0)
             self.crash_streak.setdefault(root_api, 0)
             self.last_collect_ts.setdefault(root_api, 0.0)
+            self.empty_feedback_streak.setdefault(root_api, 0)
 
             if self._is_regularized(root_api) and self.phase.get(root_api) != Phase.REGULARIZED:
                 logger.info(f"[scheduler] Root API {root_api} enters REGULARIZED mode (detach from optimization loop).")
@@ -72,6 +77,7 @@ class EpochScheduler:
                 self.window_mgr.reset(root_api)
                 self.epoch_start_ts[root_api] = now
                 self.plateau_streak[root_api] = 0
+                self.empty_feedback_streak.setdefault(root_api, 0)
     
     def _epoch_due(self, root_api: str, *, force_condition: bool = False) -> bool:
         if self.phase[root_api] == Phase.REGULARIZED:
@@ -104,7 +110,55 @@ class EpochScheduler:
             if e.errno == errno.ESRCH:
                 return False
             return True
-        
+
+    def _stop_fuzzing_process(self, batch: Batch, root_api: str):
+        pid = batch.fuzzer_pids.get(root_api, 0)
+        if not pid or pid <= 0:
+            return
+
+        try:
+            if self._pid_alive(pid):
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.5)
+                if self._pid_alive(pid):
+                    os.kill(pid, signal.SIGKILL)
+            logger.info(f"[scheduler] Stopped fuzzing process for root API {root_api} (pid={pid}).")
+        except Exception as e:
+            logger.warning(f"[scheduler] Failed to stop fuzzing process for root API {root_api} (pid={pid}): {e}")
+
+    def _remove_root_api_from_batch(self, batch: Batch, root_api: str, reason: str = ""):
+        self._stop_fuzzing_process(batch, root_api)
+
+        harness_info = batch.harness_info or {}
+        for key in ("harness_files", "harness_skeletons_files"):
+            submap = harness_info.get(key, {}) or {}
+            if isinstance(submap, dict):
+                submap.pop(root_api, None)
+
+        batch.fuzzer_pids.pop(root_api, None)
+
+        fuzz_feedback = batch.fuzz_feedback or {}
+        for key in ("fuzzer_stats_feedback", "fuzzer_stats_analysis"):
+            submap = fuzz_feedback.get(key, {}) or {}
+            if isinstance(submap, dict):
+                submap.pop(root_api, None)
+
+        self.phase.pop(root_api, None)
+        self.epoch_start_ts.pop(root_api, None)
+        self.plateau_streak.pop(root_api, None)
+        self.crash_streak.pop(root_api, None)
+        self.last_collect_ts.pop(root_api, None)
+        self.upgrade_cooldown_until.pop(root_api, None)
+        self.empty_feedback_streak.pop(root_api, None)
+        self.window_mgr.reset(root_api)
+        regularized_fuzz_root_apis.discard(root_api)
+
+        batch.save_metadata()
+        logger.warning(
+            f"[scheduler] Removed root API {root_api} from batch {batch.batch_id} because "
+            f"consecutive empty fuzzer feedback reached threshold ({reason or 'no reason provided'})."
+        )
+
     def _collect_analyze(self, batch: Batch, root_apis: Optional[List[str]] = None, force: bool = False) -> bool:
         now = time.time()
         roots = root_apis if root_apis is not None else list(self.phase.keys())
@@ -121,10 +175,36 @@ class EpochScheduler:
             return False
 
         collect_fuzzer_feedback_to_batch(batch, eligible)
-        analyze_fuzzer_feedback(batch, self.window_mgr, eligible)
+
+        analyze_roots: List[str] = []
+        roots_to_remove: List[str] = []
+        stats_map = (batch.fuzz_feedback.get("fuzzer_stats_feedback", {}) or {})
 
         for r in eligible:
-            self.last_collect_ts[r] = now
+            feedback = stats_map.get(r, {}) or {}
+            if feedback:
+                self.empty_feedback_streak[r] = 0
+                analyze_roots.append(r)
+            else:
+                self.empty_feedback_streak[r] = self.empty_feedback_streak.get(r, 0) + 1
+                logger.warning(
+                    f"[scheduler] Empty fuzzer feedback collected for root API {r} in batch {batch.batch_id}; "
+                    f"streak={self.empty_feedback_streak[r]}/{self.epoch_config.empty_feedback_k}."
+                )
+                if self.empty_feedback_streak[r] >= self.epoch_config.empty_feedback_k:
+                    roots_to_remove.append(r)
+
+        for r in roots_to_remove:
+            self._remove_root_api_from_batch(batch, r, reason=f"empty feedback {self.empty_feedback_streak.get(r, 0)} times")
+
+        if analyze_roots:
+            analyze_roots = [r for r in analyze_roots if r in self.phase]
+            if analyze_roots:
+                analyze_fuzzer_feedback(batch, self.window_mgr, analyze_roots)
+
+        for r in eligible:
+            if r in self.phase:
+                self.last_collect_ts[r] = now
 
         return True
 
@@ -167,7 +247,7 @@ class EpochScheduler:
             self._collect_analyze(batch, root_apis=non_reg_roots, force=True)
             self._collect_analyze(batch, root_apis=reg_roots, force=False)
 
-            for root_api in self.phase.keys():
+            for root_api in list(self.phase.keys()):
                 pid = batch.fuzzer_pids.get(root_api, 0)
                 if self._pid_alive(pid):
                     self.crash_streak[root_api] = 0
@@ -187,9 +267,9 @@ class EpochScheduler:
                     if self.phase.get(root_api) != Phase.REGULARIZED:
                         self.phase[root_api] = Phase.COARSE
 
-            force_due: Dict[str, bool] = {r: False for r in self.phase.keys()}
+            force_due: Dict[str, bool] = {r: False for r in list(self.phase.keys())}
 
-            for root_api in self.phase.keys():
+            for root_api in list(self.phase.keys()):
                 if self.phase.get(root_api) == Phase.REGULARIZED:
                     continue
 
@@ -213,7 +293,7 @@ class EpochScheduler:
             
             # due_roots = [r for r in self.phase.keys() if self._epoch_due(r, force_condition=force_due[r])]
             due_roots = [
-                r for r in self.phase.keys()
+                r for r in list(self.phase.keys())
                 if self.phase.get(r) != Phase.REGULARIZED and self._epoch_due(r, force_condition=force_due[r])
             ]
             if not due_roots:
@@ -223,6 +303,8 @@ class EpochScheduler:
             self._collect_analyze(batch, root_apis=due_roots, force=False)
 
             for root_api in due_roots:
+                if root_api not in self.phase:
+                    continue
                 cooldown_until = self.upgrade_cooldown_until.get(root_api, 0.0)
                 if time.time() < cooldown_until:
                     logger.info(f"[scheduler] Skipping harness upgrade for root API {root_api} in batch {batch.batch_id} due to cooldown.")

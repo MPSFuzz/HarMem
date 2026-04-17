@@ -224,7 +224,7 @@ def add_to_regularized_fuzz(trace_summary: Dict[str, Any]) -> bool:
     if bug_markers and total_num_traces > 0 and total_hit_times > 0:
         bug_marker_hit_rate = total_hit_times / total_num_traces if total_num_traces > 0 else 0.0
     
-        if bug_marker_hit_rate >= 0.2:
+        if bug_marker_hit_rate >= 0.15:
             logger.info(f"[regularized_fuzz] Trace summary for root API {root_api} shows bug_point hit rate {bug_marker_hit_rate:.3f}, adding to regularized fuzz set.")
             regularized_fuzz_root_apis.add(root_api)
             return True
@@ -825,7 +825,7 @@ def build_llm_feedback_prompt(
     lines.append(
         f"You are helping to improve a fuzzing harness and seed corpus for a C library named: {batch.lib_name}.The purpose of this harness and seed courpus is to verify and reproduce a specific bug(or vulnerability) within this library through fuzzing."
         f"that contains a call chain: {call_chain} which starts from {root_api} and whose ultimate target function is "
-        f"`{batch.target_func}`.\n"
+        f"`{batch.target_func}` (ignoring suffixes such as __internal_alias after the function name).\n"
         f"We collected runtime traces by replaying both baseline seeds and sampled fuzzer queue seeds "
         f"on a trace-instrumented version of the target library."
     )
@@ -853,16 +853,17 @@ def build_llm_feedback_prompt(
         "- You MUST reply with a **single JSON object** and nothing else (no explanations, no markdown, no comments).\n"
         "- The JSON structure must be exactly ONE of the following forms:\n"
         "  1) If you ONLY need to modify the seeds(if there are serval seeds you want to modify, the key is like seedn), reply as:\n"
-        '     { "seed1": "<FULL seed content>" ,\n' 
-        '       "seed2": "<FULL seed content>" ...}\n'
+        '     { "seed1": "<BASE64 FULL seed bytes>" ,\n' 
+        '       "seed2": "<BASE64 FULL seed bytes>" ...}\n'
         "  2) If you ONLY need to modify the harness, reply as:\n"
         '     { "harness": "<FULL harness C source code>",\n'
         '       "compile_command": "<the compile command, e.g., \'aflgo-clang -g -O2 a.c -o a.out $(pkg-config --cflags --libs libxml-2.0)\'>" }\n"'
         "  3) If you need to modify BOTH, reply as:\n"
-        '     { "seed": "<FULL seed content>",\n'
+        '     { "seed": "<BASE64 FULL seed bytes>",\n'
         '       "harness": "<FULL harness C source code>",\n'
         '       "compile_command": "<the compile command>" }\n\n'
         "- Whenever you output a harness, you MUST also provide a valid compile_command in the same JSON object.\n"
+        "- Every seed you output must be base64-encoded complete seed bytes."
         "- The compile_command should follow the pattern:\n"
             "* use aflgo-clang (or afl-clang-fast/afl-clang) as the compiler,"
             "* refer to the harness file as a.c and the output as a.out, e.g.:\n"
@@ -998,7 +999,7 @@ def build_llm_micro_tune_prompt(
     lines.append("=== Your task and output format (MUST FOLLOW) ===")
     lines.append(
         "Your task (MICRO-TUNE, marker-driven):\n"
-        f"- Keep the ability to reach the target function `{batch.target_func}` (do not break the working path).\n"
+        f"- Keep the ability to reach the target function `{batch.target_func}` (ignoring suffixes such as __internal_alias after the function name) (do not break the working path).\n"
         "- The current harness was already generated with vulnerability(or bug)-aware structural constraints. " \
         "Do not discard the existing semantic input-role separation unless runtime trace evidence strongly indicates the current structure is fundamentally wrong." \
         "Prefer localized repairs over structural simplification; "
@@ -1011,10 +1012,11 @@ def build_llm_micro_tune_prompt(
         "Output format requirements:\n"
         "- You MUST reply with a single JSON object and nothing else.\n"
         "- The JSON structure must be exactly ONE of these forms:\n"
-        "  1) { \"seed1\": \"<FULL seed>\", \"seed2\": \"<FULL seed>\", ... }     (seeds only)\n"
+        "  1) { \"seed1\": \"<BASE64 FULL seed bytes>\", \"seed2\": \"<BASE64 FULL seed bytes>\", ... }     (seeds only)\n"
         "  2) { \"harness\": \"<FULL harness C source code>\", \"compile_command\": \"<compile cmd>\" }     (harness only)\n"
-        "  3) { \"seed1\": \"<FULL seed>\", \"seed2\": \"<FULL seed>\", ..., \"harness\": \"<FULL harness C source code>\", \"compile_command\": \"<compile cmd>\" }     (both)\n"
+        "  3) { \"seed1\": \"<BASE64 FULL seed bytes>\", \"seed2\": \"<BASE64 FULL seed bytes>\", ..., \"harness\": \"<FULL harness C source code>\", \"compile_command\": \"<compile cmd>\" }     (both)\n"
         "- Whenever you output a harness, you MUST also provide a valid compile_command in the same JSON object.\n"
+        "- Every seed you output must be base64-encoded complete seed bytes."
         "- The compile_command should follow the pattern:\n"
             "* use aflgo-clang (or afl-clang-fast/afl-clang) as the compiler,"
              "* refer to the harness file as a.c and the output as a.out, e.g.:\n"

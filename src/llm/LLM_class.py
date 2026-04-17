@@ -6,24 +6,26 @@ import string
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 
-from src.utils.utils import get_logger, clean_markdown_format, extract_json_from_text, get_path_subfolder, parse_target_file, extract_target_func_code_from_plan, load_source_snippet, clip_text
+from src.utils.utils import get_logger, clean_markdown_format, extract_json_from_text, get_path_subfolder, parse_target_file, \
+    extract_target_func_code_from_plan, load_source_snippet, clip_text, build_unique_llm_seed_path, \
+    token_to_bytes, bytes_to_afl_dict_line
 from src.llm.LLM_prompt import *
 from src.harness_class.harness_class import harness, seed_for_harness
 from src.cve_helper.cve_partial_prompt_render import render_cve_hints_for_skeleton, render_cve_hints_for_codegen
 
 #TODO: 添加一个从LLM获得字典的接口
 
-# openai.api_key = "sk-WXtqOuBZPY096KTcDdE866275274464d88943d068aA7Ff5d"
-openai.api_key = "sk-tt38idkFn5fBhmvCF5AdB32fA90d4f71A8417d5b7fE77030" # group ys
-# openai.base_url = "https://api.gpt.ge/v1/"
+openai.api_key = "sk-WXtqOuBZPY096KTcDdE866275274464d88943d068aA7Ff5d"
+# openai.api_key = "sk-tt38idkFn5fBhmvCF5AdB32fA90d4f71A8417d5b7fE77030" # group ys
+openai.base_url = "https://api.gpt.ge/v1/"
 # openai.base_url = "https://api.v3.cm/v1/"
-openai.base_url = "https://api.vveai.com/v1/"
+# openai.base_url = "https://api.vveai.com/v1/"
 openai.default_headers = {"x-foo": "true"}
 
 logger = get_logger(__name__)
 
 class LLM:
-    def __init__(self, lib_name=None, target_func=None, target_location=None, max_retries=3, retry_delay=5, timeout=60, model: Optional[str] = "gpt-5.2"):
+    def __init__(self, lib_name=None, target_func=None, target_location=None, max_retries=3, retry_delay=5, timeout=60, model: Optional[str] = "gpt-5.4"):
         self.lib_name = lib_name
         self.target_func = target_func
         self.target_location = target_location
@@ -210,6 +212,7 @@ class LLM:
         for attempt in range(1, self.max_retries + 1):
             try:
                 # fix_prompt = HARNESS_FIX_PROMPT % (self.plan, h.code, h.compile_command, h.compile_result)
+                h.compile_result = h.compile_result[:200]
                 fix_prompt = HARNESS_FIX_PROMPT % (h.code, h.compile_command, h.compile_result)
 
                 response = openai.chat.completions.create(
@@ -292,8 +295,10 @@ class LLM:
                 cleaned_tokens = []
                 seen = set()
                 for token in tokens:
-                    v = (token.get("value") or "").strip()
-                    if not v:
+                    v = token.get("value")
+                    if v is None:
+                        continue
+                    if isinstance(v, str) and v == "":
                         continue
                     w = token.get("weight_hint", min_weight)
                     try:
@@ -316,7 +321,9 @@ class LLM:
                 dict_save_file = os.path.join(p, "harness_dict.dict")
                 with open(dict_save_file, "w", encoding="utf-8") as f:
                     for v in cleaned_tokens:
-                        f.write(json.dumps(v))
+                        token_bytes = token_to_bytes(v)
+                        afl_dict_line = bytes_to_afl_dict_line(token_bytes)
+                        f.write(afl_dict_line)
                         f.write("\n")
                 
                 logger.info(f"Saved harness dictionary to {dict_save_file}")
@@ -422,9 +429,10 @@ class LLM:
                     logger.info("[LLM] LLM suggests modifying the seed instead of the harness.")
                     
                     for key, value in content.items():
+                        unique_seed_path = build_unique_llm_seed_path(seed_save_path, key)
                         s = seed_for_harness(
-                            seed_content = value,
-                            seed_save_path = seed_save_path / f"{key}_from_llm"
+                            seed_content_b64 = value,
+                            seed_save_path = unique_seed_path
                         )
                         
                         seeds.append(s)
@@ -448,9 +456,10 @@ class LLM:
                     
                     for key, value in content.items():
                         if key.startswith("seed"):
+                            unique_seed_path = build_unique_llm_seed_path(seed_save_path, key)
                             s = seed_for_harness(
-                                seed_content = value,
-                                seed_save_path = seed_save_path / f"{key}_from_llm"
+                                seed_content_b64 = value,
+                                seed_save_path = unique_seed_path
                             )
                             
                             seeds.append(s)
@@ -497,9 +506,10 @@ class LLM:
                     logger.info("[LLM] LLM has generated new seeds.")
                     
                     for key, value in content.items():
+                        unique_seed_path = build_unique_llm_seed_path(seed_save_path, key)
                         s = seed_for_harness(
-                            seed_content = value,
-                            seed_save_path = seed_save_path / f"{key}_from_llm"
+                            seed_content_b64 = value,
+                            seed_save_path = unique_seed_path
                         )
                         
                         seeds.append(s)

@@ -105,5 +105,6 @@ class harness:
 
 @dataclass
 class seed_for_harness:
-    seed_content: str
+    seed_content_b64: str
     seed_save_path: str
+    seed_encoding: str = "base64"

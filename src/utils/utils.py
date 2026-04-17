@@ -4,7 +4,9 @@ import shutil
 import json
 import logging
 import colorlog
+import uuid
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Dict, Tuple
 #from ..batch.batch_class import Batch
@@ -112,7 +114,7 @@ def get_path_in_src(subfolder: str, filename: str) -> str:
     dir_path = os.path.join(root_dir, subfolder)
     os.makedirs(dir_path, exist_ok=True)
     return os.path.join(dir_path, filename)
-
+ 
 def get_parent_dir(path: str) -> str:
     p = Path(path)
     return str(p.parent)
@@ -134,9 +136,9 @@ def parse_target_file(target_path: str, plan: Dict, target_func: str) -> List[Tu
             continue
         if ":" not in s:
             continue
-        _, ln = s.split(":", 1)
+        marker_file_path, ln = s.split(":", 1)
         try:
-            out.append((file_path, int(ln.strip())))
+            out.append((marker_file_path, int(ln.strip())))
         except Exception:
             continue
 
@@ -190,3 +192,25 @@ def copy_seeds_provided_by_user(src_dir: Path, dest_dir: Path) -> bool:
             shutil.copy2(item, target)
 
     return True
+
+def build_unique_llm_seed_path(seed_save_dir, seed_key: str):
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_uuid = uuid.uuid4().hex[:8]
+    return seed_save_dir / f"{seed_key}_from_llm_{ts}_{short_uuid}"
+
+def token_to_bytes(token_value) -> bytes:
+    if isinstance(token_value, bytes):
+        return token_value
+    if not isinstance(token_value, str):
+        token_value = str(token_value)
+    return token_value.encode("utf-8", errors="surrogatepass")
+
+def bytes_to_afl_dict_line(data: bytes) -> str:
+    out = ['"']
+    for b in data:
+        if 0x20 <= b <= 0x7e and b not in (0x22, 0x5c):
+            out.append(chr(b))
+        else:
+            out.append(f"\\x{b:02x}")
+    out.append('"')
+    return "".join(out)

@@ -1,6 +1,7 @@
 import os
 import json
 import shutil
+import base64
 
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -36,14 +37,27 @@ def _kill_fuzz_process(pid: str, harness_save_path: str):
 def _save_modified_seeds(seeds: List[seed_for_harness]) -> bool:
     for s in seeds:
         try:
-            with open(s.seed_save_path, "w", encoding="utf-8") as f:
-                f.write(s.seed_content)
+            seed_path = Path(s.seed_save_path)
+            seed_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if (s.seed_encoding or "base64").lower() == "base64":
+                try:
+                    seed_bytes = base64.b64decode(s.seed_content_b64, validate=True)
+                except Exception as decode_err:
+                    logger.error(
+                        f"[harness_upgrade] Failed to base64 decode seed for {seed_path}: {decode_err}"
+                    )
+                    return False
+            else:
+                seed_bytes = s.seed_content_b64.encode("utf-8")
+
+            with open(seed_path, "wb") as f:
+                f.write(seed_bytes)
         except Exception as e:
             logger.error(f"[harness_upgrade] Failed to save modified seed to {s.seed_save_path}: {e}")
             return False
-    
-    return True
 
+    return True
 def _clean_up_seed_files(seed_save_folder: Path):
     if seed_save_folder.is_dir():
         for f in seed_save_folder.iterdir():
@@ -202,7 +216,7 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             #_save_modified_seeds(response)
             seed_generation_prompt = build_seed_generation_prompt(batch, sampled_queue_seed_runtime_trace_result, code_file, baseline_seeds)
             seeds_content = llm.llm_seed_generation(h, seed_generation_prompt)
-            _clean_up_seed_files(baseline_seeds_path)
+            # _clean_up_seed_files(baseline_seeds_path)
             upgrade_flag = _save_modified_seeds(seeds_content)
             if upgrade_flag:
                 logger.info(f"[Harness_upgrade2] Seeds upgrade success for root api {root_api} in function {batch.target_func}")
@@ -253,7 +267,7 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             #_save_modified_seeds(response)
             seed_generation_prompt = build_seed_generation_prompt(batch, sampled_queue_seed_runtime_trace_result, harness_path=code_file, baseline_seeds=baseline_seeds)
             seeds_content = llm.llm_seed_generation(h, seed_generation_prompt)
-            _clean_up_seed_files(baseline_seeds_path)
+            # _clean_up_seed_files(baseline_seeds_path)
             upgrade_flag = _save_modified_seeds(seeds_content)
 
             if upgrade_flag:

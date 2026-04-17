@@ -24,7 +24,7 @@ class TraceConfig:
     trace_pkg_name = os.environ.get("TRACE_PKG_NAME", "")
     trace_libdir = os.environ.get("TRACE_LIBDIR", "") # the actual path to the library which is instrumented by trace pass
 
-    num_recent: int = int(os.environ.get("TRACE_NUM_RECENT", "5"))
+    num_recent: int = int(os.environ.get("TRACE_NUM_RECENT", "10"))
     num_random: int = int(os.environ.get("TRACE_NUM_RANDOM", "5"))
 
 def _parse_ys_fields_from_stderr(stderr_text: str) -> Dict[str, str]:   # for controllability_report, optional, can be used to extract some custom fields from trace binary's stderr output
@@ -96,6 +96,7 @@ def compile_trace_binary(batch: Batch, root_api: str, t_config: TraceConfig) -> 
     try:
         cmd = [
             t_config.cc,
+            "-fsanitize=address",
             *t_config.cflags.split(),
             str(harness_path),
             *pkg_cflags.split(),
@@ -131,8 +132,18 @@ def sample_fuzzer_queue_cases(harness_path: str, t_config: TraceConfig) -> List[
     recent_cases = cases[:t_config.num_recent]
     
     remaining = cases[t_config.num_recent:]
-    random.shuffle(remaining)
-    remaining_cases = remaining[:t_config.num_random]
+    # a patch for sampled cases <<<
+    if remaining:
+        random.shuffle(remaining)
+        num_to_sample = len(remaining) // 2
+        remaining_cases = remaining[:num_to_sample]
+    else:
+        random.shuffle(remaining)
+        remaining_cases = remaining[:t_config.num_random]
+    # >>>
+
+    # random.shuffle(remaining)
+    # remaining_cases = remaining[:t_config.num_random]
 
     sampled_cases = recent_cases + remaining_cases
 
@@ -158,10 +169,10 @@ def run_trace_on_sampled_cases(sampled_case: List[Path], trace_binary_path: Path
         try:
             # subprocess.run(cmd, env=env)
             # capture stderr for controllability analysis; does not affect normal fuzzing.
-            r = subprocess.run(cmd, env=env, capture_output=True, text=True)
+            r = subprocess.run(cmd, env=env, capture_output=True, text=False)
             if r.stderr:
                 try:
-                    trace_stderr_output_name.write_text(r.stderr, encoding="utf-8", errors="ignore")
+                    trace_stderr_output_name.write_bytes(r.stderr)
                 except Exception:
                     pass
 

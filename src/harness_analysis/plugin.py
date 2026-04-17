@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 
 from .treesitter_backend import TreeSitterCBackend
@@ -23,6 +25,9 @@ def analyze_harness_structure(
     backend = TreeSitterCBackend()
     raw = backend.extract_raw(code)
     raw["backend"] = backend.backend_name
+
+    match = re.match(r'^([^_]+)', target_api)
+    target_api = match.group(1) if match else target_api
 
     facts = normalize_raw_to_facts(raw, target_api=target_api)
     evaluation = evaluate_constraints(facts, constraints)

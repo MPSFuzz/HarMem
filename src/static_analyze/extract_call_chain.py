@@ -100,6 +100,10 @@ def extract_target_call_chain(graph:nx.DiGraph, target_func, root_apis: list) ->
             # chosen_path = random.choice(candidate_paths)
             # chosen_path = get_label_by_Node(graph=graph, node=chosen_path)
             # result[chosen_path[0]] = chosen_path
+    
+    if len(result) == 0 and target_node is not None:
+        logger.info(f"[extract_target_call_chain] No path found from any root API to '{target_func}'. Treating '{target_func}' as its own root.")
+        result[target_func] = [target_func]
 
     return result
 
