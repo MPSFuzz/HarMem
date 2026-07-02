@@ -79,10 +79,21 @@ class harness:
 
         self.compile_command = compile_command_modified
 
+    def _ensure_compile_sanitizer(self):
+        if self.compile_command and not re.search(r'-fsanitize=', self.compile_command):
+            self.compile_command = re.sub(
+                r'(aflgo-clang\S*|afl-clang\S*|clang\b)',
+                r'\1 -fsanitize=address',
+                self.compile_command,
+                count=1
+            )
+            logger.info("Auto-appended -fsanitize=address to compile command")
+
     def compile_test(self) -> bool:
         env = os.environ.copy()
         env.update(self._get_env_var())
-        
+        self._ensure_compile_sanitizer()
+
         try:
             self.compile_result = subprocess.run(
                 #["bash", "-lc", self.compile_command],

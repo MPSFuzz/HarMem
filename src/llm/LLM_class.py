@@ -15,7 +15,7 @@ from src.cve_helper.cve_partial_prompt_render import render_cve_hints_for_skelet
 
 #TODO: 添加一个从LLM获得字典的接口
 
-openai.api_key = "sk-WXtqOuBZPY096KTcDdE866275274464d88943d068aA7Ff5d"
+openai.api_key = "sk-Va6tOrqn4ulxsYc6226cE01dEfAf4509B6C0EdEb1aAe2672"   #  fxm
 # openai.api_key = "sk-tt38idkFn5fBhmvCF5AdB32fA90d4f71A8417d5b7fE77030" # group ys
 openai.base_url = "https://api.gpt.ge/v1/"
 # openai.base_url = "https://api.v3.cm/v1/"

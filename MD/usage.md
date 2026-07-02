@@ -125,4 +125,52 @@ afl-fuzz -m none -z exp \
 │  → LLM → tokens → token_to_bytes()            │
 │  → bytes_to_afl_dict_line()                    │──→ harness_dict.dict ──→ afl-fuzz -x
 └───────────────────────────────────────────────┘
+
+---
+
+## 四、AFLGo 预处理模式：`BBtargets.txt` 与 `Ftargets.txt` 生成
+
+Step 2 中需要运行 `opt -load-pass-plugin=aflgo-pass.so -passes="aflgo-npm" -targets=<...> -outdir=<...>` 进入预处理模式，根据 `BBtargets.txt` 生成 `Ftargets.txt`、`Fnames.txt`、`BBnames.txt`、`BBcalls.txt` 等文件。
+
+### `BBtargets.txt` 格式要求
+
+**每行必须是 `文件名:行号`**，不是函数名。Pass 内部会跳过不含冒号的行（`aflgo-pass.so.cc:311-312`）：
+
+```
+# 正确格式
+parser.c:11876
+parser.c:11852
+xmlstring.c:234
+```
+
+```bash
+# 错误格式：缺少冒号，该行会被跳过
+xmlParseChunk
+xmlPatMatch
+```
+
+### 常见问题：`Ftargets.txt` 为空
+
+原因只有一个：**`targets.txt` 中指定的 `filename:line` 不在当前 bitcode 文件的 debug info 里**。
+
+例如你的 bitcode 是 `./.libs/libxml2.so.16.2.0.bc`（共享库），它包含的是 `parser.c`、`buf.c`、`tree.c` 等库源码，**不包含** `xmllint.c`（它是独立的可执行文件源码）。如果你在 `targets.txt` 里写：
+
+```
+xmllint.c:384
+xmllint.c:385
+```
+
+Pass 遍历 bitcode 中所有指令的 debug location 时找不到任何匹配，`is_target_func` 始终为 `false`，`Ftargets.txt` 就不会被写入任何函数名。
+
+**排查方法**：
+
+1. 确认你的 bc 文件包含哪些源码——看 `Fnames.txt` 中函数的源文件归属（或 `opt -print-module` 查看函数元数据）
+2. `targets.txt` 中指定的源文件名必须与 debug info 中的文件名一致（通常只取 basename，pass 内部会调用 `find_last_of("/\\")` 截取）
+3. 如果目标代码在可执行文件而非共享库中，需要找到可执行文件对应的 `.bc` 文件，或编译时用 `-emit-llvm` 单独生成
+
+**受影响的文件**：
+- `aflgo_components/instrument/aflgo-pass.so.cc:280-480`：预处理模式主逻辑
+- `aflgo_components/instrument/aflgo-pass.so.cc:306-319`：`targets.txt` 解析（`filename:line` 格式）
+- `aflgo_components/instrument/aflgo-pass.so.cc:393-404`：目标命中检测（匹配 debug location）
+- `aflgo_components/instrument/aflgo-pass.so.cc:462-474`：写入 `Ftargets.txt` 的条件（`is_target_func == true` 或其内联的原函数）
 ```

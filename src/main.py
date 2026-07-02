@@ -66,6 +66,11 @@ def main():
 
     args = parser.parse_args()
 
+    #### fxm debug 
+    scheduler = EpochScheduler(config=EpochConfig())
+    scheduler.run("ce57d8eb-ff53-4bfd-a16a-22e811369c02")
+    #### fxm debug
+
     assert os.path.isdir(args.project_path), f"Project path {args.project_path} is not a valid directory."
     assert os.path.exists(args.project_path), f"Project path {args.project_path} does not exist."
     assert os.path.isfile(args.dot_file), f"Dot file {args.dot_file} does not exist."

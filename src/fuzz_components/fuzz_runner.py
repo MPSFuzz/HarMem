@@ -76,6 +76,8 @@ def _get_env_var() -> dict:
         env = os.environ.copy()
         if shell_env:
             env.update(shell_env)
+        for k in ("AFL_NO_AFFINITY", "AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES", "AFL_SKIP_CPUFREQ"):
+            env.setdefault(k, "1")
         _shell_env_cache = env
     return _shell_env_cache
 
@@ -147,6 +149,9 @@ def start_fuzzing(batch_id: Optional[str] = None,  batch: Optional[Batch] = None
 
     elif batch_id:
         file_path = get_path_in("batch_metadata", f"{batch_id}.json")
+        if not os.path.isfile(file_path):
+            logger.error(f"[fuzz] batch metadata not found: {file_path}")
+            return None
         batch_instance = Batch.load_metadata(file_path)
 
         harness_info: Dict[str, Any] = batch_instance.harness_info

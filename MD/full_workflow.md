@@ -8,6 +8,7 @@
 - 目标库的源码已克隆到本地
 - LLVM 工具链可用（`opt`, `llvm-config` 等）
 - AFLGo 的 `aflgo-clang`、`aflgo-pass.so`、`distance.bin` 已编译就绪
+- Trace 插桩组件已编译（`src/runtime_components/trace_fn_instrument/` 下的 `TraceInstrumentationPass.so` 和 `trace_runtime.a`）
 
 ---
 
@@ -20,13 +21,14 @@
 │  1. 首次编译：生成 bitcode (.bc) + CFG dot 文件 + CG dot    │
 │  2. 指定目标基本块 → BBtargets.txt                          │
 │  3. 计算距离 → gen_distance_fast.py → distance.cfg.txt      │
-│  4. 二次编译：用 -distance 标志注入距离信息                  │
+│  4. 二次编译：用 -distance 标志注入距离信息 (AFLGo 插桩)     │
+│  4b.三次编译：用 TraceInstrumentationPass 插桩 (trace 版库) │
 │  5. 生成 compile_commands.json                              │
 │  6. 启动 auto_harness → harness 生成 + 定向 fuzz            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-> **注意**：步骤 1-5 为手动前置步骤，步骤 6 由 auto_harness 自动完成。
+> **注意**：步骤 1-5 为手动前置步骤，步骤 6 由 auto_harness 自动完成。步骤 4b 是可选的，但如果跳过，调度器的自动 harness 升级功能将降级为仅基于 fuzzer_stats 的粗粒度分析（无运行时 trace 反馈）。
 
 ---
 
@@ -283,6 +285,80 @@ make install
 
 ---
 
+## 步骤 4b（可选）：第三次编译 —— 注入 Trace 插桩
+
+AFLGo 的距离反馈只能告诉我们"离目标有多近"，但无法知道具体哪些函数被调用了、哪些分支走了哪一侧。为了在 harness 升级时获得更细粒度的执行轨迹信息，需要单独编译一个 **trace 插桩版**的目标库。
+
+> **原理**：自定义 LLVM Pass（`TraceInstrumentationPass.cpp`）在目标库的每个函数中插入 hook：
+> - 函数进入/退出（`trace_fn_enter` / `trace_fn_exit`）
+> - 条件分支方向（`trace_branch`，true/false 计数）
+> - 调用边（`trace_call_edge`，caller → callee）
+> - 可选的 bug_point marker（通过 `TRACE_MARKER_TARGETS_FILE` 指定）
+>
+> 进程退出时，`trace_runtime.c` 将所有事件序列化为 JSON，供 LLM 分析。
+
+### 编译 trace 版库
+
+```bash
+cd /path/to/mylib
+
+make clean
+
+CC=clang \
+CXX=clang++ \
+CFLAGS="-fpass-plugin=/root/auto_harness/src/runtime_components/trace_fn_instrument/TraceInstrumentationPass.so -g -O0" \
+CXXFLAGS="-fpass-plugin=/root/auto_harness/src/runtime_components/trace_fn_instrument/TraceInstrumentationPass.so -g -O0" \
+LDFLAGS="/root/auto_harness/src/runtime_components/trace_fn_instrument/trace_runtime.a" \
+  ./configure --prefix=/path/to/mylib/trace_build
+
+make -j$(nproc)
+make install
+```
+
+编译后目录结构：
+```
+/path/to/mylib/
+├── build/          # AFLGo 距离插桩版（步骤 4 产物，用于 fuzzing）
+└── trace_build/    # trace 插桩版（步骤 4b 产物，用于离线诊断）
+```
+
+### 配置环境变量
+
+```bash
+export TRACE_LIBDIR=/path/to/mylib/trace_build/lib
+export TRACE_PKG_NAME=mylib         # pkg-config 包名，用于编译 trace binary 时获取 cflags/libs
+```
+
+### 自动触发流程
+
+设置好 `TRACE_LIBDIR` 和 `TRACE_PKG_NAME` 后，调度器检测到 harness 不合格时（COARSE 阶段 unstable/very_low_coverage/no_distance_progress，或 FINE 阶段 distance_plateau），会自动：
+
+1. `compile_trace_binary()` — 用 clang + trace 版库重新编译 harness 源码，生成 `trace_harness`
+2. `sample_fuzzer_queue_cases()` — 从 `out/queue/` 采样 fuzzer 变异后的种子
+3. `run_trace_on_sampled_cases()` — 用 `trace_harness` 重放采样种子，每个产出 `trace_*.json`
+4. `collect_trace_information()` + `analyze_trace_summary_for_llm()` — 汇总分析轨迹
+5. LLM 根据详细轨迹决定：修改 harness 代码、生成新种子、或两者同时
+6. `start_fuzzing()` — 用改进后的 harness/种子重新启动 fuzz 进程，回到 COARSE 重新评估
+
+```
+同一个 harness.c 被编译了两次，链接不同版本的库：
+
+  harness.c
+     │
+     ├── 编译1: aflgo-clang + build/lib/libxxx.so → harness.out
+     │         └── afl-fuzz -i in -o out -- harness.out @@     ← fuzzing 进程
+     │               └── 产出 out/queue/* (AFL 变异种子)
+     │
+     └── 编译2: clang + trace_build/lib/libxxx.so → trace_harness
+               └── trace_harness out/queue/id:000001            ← 升级时临时执行
+               └── trace_harness out/queue/id:000002
+               └── ... → trace_*.json → 分析 → LLM 决策升级
+```
+
+> **注意**：如果不设置 `TRACE_LIBDIR` 和 `TRACE_PKG_NAME`，则调度器的 harness 升级将跳过 trace 分析，仅基于 `fuzzer_stats` 的粗粒度指标（覆盖率、距离、稳定性）做 LLM 改进。
+
+---
+
 ## 步骤 5：生成 compile_commands.json
 
 `compile_commands.json` 是 libclang 静态分析所需的编译数据库。
@@ -325,6 +401,9 @@ cp /path/to/some/valid/input.bin /root/experiment/seeds/MyCVE/
 export AFL_NO_AFFINITY=1
 export LD_LIBRARY_PATH=/path/to/mylib/build/lib/
 export PKG_CONFIG_PATH=/path/to/mylib/build/lib/pkgconfig/
+# 如果启用了 trace 插桩（步骤 4b）：
+export TRACE_LIBDIR=/path/to/mylib/trace_build/lib
+export TRACE_PKG_NAME=mylib
 # 如果使用 Magma 漏洞检测框架：
 # export MAGMA_STORAGE=/path/to/magma/canaries.raw
 ```
@@ -397,6 +476,13 @@ main.py
 | `TRACE_PKG_NAME` | 运行时 trace 所用的 pkg-config 包名 | 可选 |
 | `TRACE_LIBDIR` | 运行时 trace 库的 lib 路径 | 可选 |
 | `MAGMA_STORAGE` | Magma canaries 文件路径（漏洞检测用） | 可选 |
+| `TRACE_CC` | trace 编译使用的 C 编译器 | 可选 (默认 `clang`) |
+| `TRACE_CFLAGS` | trace 编译的 CFLAGS | 可选 (默认 `-g -O0`) |
+| `TRACE_PKG_NAME` | trace 插桩版库的 pkg-config 包名 | 可选（启用 trace 时必填） |
+| `TRACE_LIBDIR` | trace 插桩版库的 lib 路径 | 可选（启用 trace 时必填） |
+| `TRACE_MARKER_TARGETS_FILE` | bug_point marker 位置文件（`file:line` 格式） | 可选 |
+| `TRACE_NUM_RECENT` | trace 采样时选取最近队列文件数量 | 可选 (默认 10) |
+| `TRACE_NUM_RANDOM` | trace 采样时随机选取队列文件数量 | 可选 (默认 5) |
 
 ---
 
