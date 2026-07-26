@@ -50,6 +50,8 @@ class EpochScheduler:
         self.upgrade_cooldown_until: Dict[str, float] = {}
         self.empty_feedback_streak: Dict[str, int] = {}
         self.window_mgr = FuzzStatsWindowManager()
+        self._last_crash_count: Dict[str, int] = {}
+        self._crash_bonus_until: Dict[str, float] = {}
     
     def _ensure(self, batch: Batch):
         now = time.time()
@@ -87,16 +89,20 @@ class EpochScheduler:
         elapsed = now - self.epoch_start_ts[root_api]
         ph = self.phase[root_api]
 
+        bonus_until = self._crash_bonus_until.get(root_api, 0.0)
+        eff_max = max(self.epoch_config.coarse_max_sec if ph == Phase.COARSE else self.epoch_config.fine_max_sec,
+                      bonus_until - (now - elapsed))
+
         if ph == Phase.COARSE:
             if elapsed < self.epoch_config.coarse_min_sec:
                 return False
-            elif elapsed >= self.epoch_config.coarse_max_sec:
+            elif elapsed >= eff_max:
                 return True
             return force_condition
         else:
             if elapsed < self.epoch_config.fine_min_sec:
                 return False
-            elif elapsed >= self.epoch_config.fine_max_sec:
+            elif elapsed >= eff_max:
                 return True
             return force_condition
 
@@ -314,6 +320,20 @@ class EpochScheduler:
                 analysis = (batch.fuzz_feedback.get("fuzzer_stats_analysis", {}) or {}).get(root_api, {}) or {}
                 stats = (batch.fuzz_feedback.get("fuzzer_stats_feedback", {}) or {}).get(root_api, {}) or {}
                 issues = analysis.get("issues", []) or []
+
+                current_crashes = int(stats.get("unique_crashes", 0) or 0)
+                prev_crashes = self._last_crash_count.get(root_api, 0)
+                if current_crashes > 0 and current_crashes > prev_crashes:
+                    self._last_crash_count[root_api] = current_crashes
+                    if root_api not in self._crash_bonus_until:
+                        self._crash_bonus_until[root_api] = time.time() + 60 * 60
+                        logger.info(f"[scheduler] {root_api}: first crash detected ({current_crashes}), epoch extended to 60min")
+                    else:
+                        logger.info(f"[scheduler] {root_api}: new crash detected ({prev_crashes}→{current_crashes}), skip upgrade this epoch")
+                    self.epoch_start_ts[root_api] = time.time()
+                    self.plateau_streak[root_api] = 0
+                    self.window_mgr.reset(root_api)
+                    continue
 
                 if self.phase[root_api] == Phase.COARSE:
                     if not is_harness_qualified_in_coares_grain(stats, root_api):

@@ -1,7 +1,8 @@
 import os
 import subprocess
+import tempfile
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 from src.utils.utils import get_logger
 from src.utils.utils import get_path_in, copy_seeds_provided_by_user
@@ -10,6 +11,42 @@ from src.batch.batch_class import Batch
 logger = get_logger(__name__)
 
 _shell_env_cache: Optional[dict] = None
+
+
+def _execute_seed_generator(generator_code: str, out_dir: str, timeout: int = 30) -> List[str]:
+    script_path = os.path.join(out_dir, "_seed_gen.py")
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(generator_code)
+    try:
+        proc = subprocess.run(
+            ["python3", script_path, out_dir],
+            capture_output=True, text=True, timeout=timeout
+        )
+        if proc.returncode != 0:
+            logger.error(f"[seed_gen] generator failed (rc={proc.returncode}):\nstderr: {proc.stderr}")
+            return []
+        seed_patterns = ["seed_", "input_", "fuzz_", "test_"]
+        generated = []
+        for entry in sorted(os.listdir(out_dir)):
+            if entry == "_seed_gen.py":
+                continue
+            for prefix in seed_patterns:
+                if entry.startswith(prefix):
+                    generated.append(os.path.join(out_dir, entry))
+                    break
+        logger.info(f"[seed_gen] generator produced {len(generated)} seed files, stdout: {proc.stdout.strip()}")
+        return generated
+    except subprocess.TimeoutExpired:
+        logger.error(f"[seed_gen] generator timed out after {timeout}s")
+        return []
+    except Exception as e:
+        logger.error(f"[seed_gen] generator execution error: {e}")
+        return []
+    finally:
+        try:
+            os.remove(script_path)
+        except OSError:
+            pass
 
 def _process_harness_path(harness_sourcecode_path: str) -> str:
     p = Path(harness_sourcecode_path)

@@ -25,14 +25,14 @@ openai.default_headers = {"x-foo": "true"}
 logger = get_logger(__name__)
 
 class LLM:
-    def __init__(self, lib_name=None, target_func=None, target_location=None, max_retries=3, retry_delay=5, timeout=60, model: Optional[str] = "gpt-5.4"):
+    def __init__(self, lib_name=None, target_func=None, target_location=None, max_retries=3, retry_delay=5, timeout: Optional[int] = None, model: Optional[str] = None):
         self.lib_name = lib_name
         self.target_func = target_func
         self.target_location = target_location
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.timeout = timeout
-        self.model = model
+        self.timeout = timeout or int(os.environ.get("LLM_TIMEOUT", "120"))
+        self.model = model or os.environ.get("LLM_MODEL") or "gpt-5.4"
 
         # cve_helper related attributes
         self.phase_A_context = {}
@@ -500,22 +500,63 @@ class LLM:
 
                 content = json.loads(result)
 
-                if "seed1" in content:
+                seed_save_path = Path(h.code_save_folder) / "in"
+
+                if content.get("type") == "generator":
+                    generator_code = content.get("generator_code", "")
+                    if not generator_code:
+                        logger.warning("[LLM] generator type but no generator_code, falling back")
+                        return None
+                    from src.fuzz_components.fuzz_runner import _execute_seed_generator
+                    generated_files = _execute_seed_generator(generator_code, str(seed_save_path))
+                    if not generated_files:
+                        logger.warning("[LLM] seed generator produced no files")
+                        return None
+                    seeds = []
+                    for filepath in generated_files:
+                        s = seed_for_harness(
+                            seed_content_b64 = filepath,
+                            seed_save_path = filepath,
+                            seed_encoding = "file"
+                        )
+                        seeds.append(s)
+                    logger.info(f"[LLM] LLM seed generator produced {len(seeds)} seeds.")
+                    return seeds
+
+                elif content.get("type") == "seeds":
+                    seeds_data = content.get("seeds", content)
+                    if "seed1" in seeds_data:
+                        seeds: List[seed_for_harness] = []
+                        logger.info("[LLM] LLM has generated new seeds (direct).")
+
+                        for key, value in seeds_data.items():
+                            unique_seed_path = build_unique_llm_seed_path(seed_save_path, key)
+                            s = seed_for_harness(
+                                seed_content_b64 = value,
+                                seed_save_path = unique_seed_path,
+                                seed_encoding = "base64"
+                            )
+
+                            seeds.append(s)
+
+                        return seeds
+
+                elif "seed1" in content:
                     seeds: List[seed_for_harness] = []
-                    seed_save_path = Path(h.code_save_folder) / "in"
-                    logger.info("[LLM] LLM has generated new seeds.")
-                    
+                    logger.info("[LLM] LLM has generated new seeds (legacy).")
+
                     for key, value in content.items():
                         unique_seed_path = build_unique_llm_seed_path(seed_save_path, key)
                         s = seed_for_harness(
                             seed_content_b64 = value,
-                            seed_save_path = unique_seed_path
+                            seed_save_path = unique_seed_path,
+                            seed_encoding = "base64"
                         )
-                        
+
                         seeds.append(s)
 
                     return seeds
-                
+
             except Exception as e:
                 logger.warning(f"[LLM] llm_seed_generation attempt {attempt} failed: {e}")
                 if attempt < self.max_retries:

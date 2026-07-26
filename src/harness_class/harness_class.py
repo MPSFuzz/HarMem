@@ -73,10 +73,8 @@ class harness:
 
     def complete_compile_command(self):
         filename, _ = os.path.splitext(self.code_file)
-        compile_command_template = self.compile_command
-        compile_command_modified = re.sub(r'\ba\.out\b', f"{filename}.out", compile_command_template)
-        compile_command_modified = re.sub(r'\ba\.c\b', f"{filename}.c", compile_command_modified)
-
+        compile_command_modified = re.sub(r'\S+\.out\b', f"{filename}.out", self.compile_command)
+        compile_command_modified = re.sub(r'\S+\.c\b', self.code_file, compile_command_modified)
         self.compile_command = compile_command_modified
 
     def _ensure_compile_sanitizer(self):

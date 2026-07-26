@@ -174,3 +174,43 @@ Pass 遍历 bitcode 中所有指令的 debug location 时找不到任何匹配�
 - `aflgo_components/instrument/aflgo-pass.so.cc:393-404`：目标命中检测（匹配 debug location）
 - `aflgo_components/instrument/aflgo-pass.so.cc:462-474`：写入 `Ftargets.txt` 的条件（`is_target_func == true` 或其内联的原函数）
 ```
+
+
+
+
+### debug 方法
+调用 harness_upgrade.py 158-159中的 get_fileterd_metadata_for_specific_root_api(), get_aggregate_runtime_trace_information(), 可以观察到目标函数是否到达，可以用来解析somepath_to_fuzzout/trace_out/runtime_trace_information下的大量  seed trace information.
+
+
+###  后台执行 afl-fuzz
+1. 创建 tmux 会话
+tmux new -s aflgo
+
+进入 tmux 后，直接运行你的命令：
+
+afl-fuzz \
+  -m none \
+  -z exp \
+  -i /root/auto_harness/src/harness/20260714_103533/in \
+  -o /root/auto_harness/src/harness/20260714_103533/out \
+  -x /root/auto_harness/src/harness/20260714_103533/harness_dict.dict \
+  -- \
+  /root/auto_harness/src/harness/20260714_103533/20260714_103533_xmlSchematronRunTest.out @@
+2. 退出但不停止 fuzzing
+
+按：
+
+Ctrl+b
+
+松开后再按：
+
+d
+
+这叫 detach。AFLGo 会继续运行。
+
+3. 重新进入
+tmux attach -t aflgo
+
+查看已有会话：
+
+tmux ls

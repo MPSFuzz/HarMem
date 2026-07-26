@@ -66,9 +66,9 @@ def main():
 
     args = parser.parse_args()
 
-    #### fxm debug 
+    #### fxm debug  
     scheduler = EpochScheduler(config=EpochConfig())
-    scheduler.run("ce57d8eb-ff53-4bfd-a16a-22e811369c02")
+    scheduler.run("06f91e4b-c5f0-4cc9-bd95-877f9440e6be")
     #### fxm debug
 
     assert os.path.isdir(args.project_path), f"Project path {args.project_path} is not a valid directory."

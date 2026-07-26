@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import base64
+import datetime
 
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -22,6 +23,9 @@ def _kill_fuzz_process(pid: str, harness_save_path: str):
     try:
         os.kill(pid, 9)
         outdir_path = os.path.join(harness_save_path, "out")
+        if not os.path.isdir(outdir_path):
+            logger.info(f"Killed fuzzing process with PID {pid} (out dir already cleaned).")
+            return
         for item in os.listdir(outdir_path):
             item_path = os.path.join(outdir_path, item)
             if os.path.isdir(item_path):
@@ -34,13 +38,43 @@ def _kill_fuzz_process(pid: str, harness_save_path: str):
         logger.error(f"pid: {pid} dose not exist or has already been terminated : {e}")
         return
 
+
+def _preserve_crash_out(fuzzer_stats: dict, code_save_folder: str, code_file: str):
+    crashes = int(fuzzer_stats.get("unique_crashes", 0) or 0)
+    hangs = int(fuzzer_stats.get("unique_hangs", 0) or 0)
+    if crashes <= 0 and hangs <= 0:
+        return
+
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = f"_c{crashes}_h{hangs}_{ts}"
+
+    out_dir = os.path.join(code_save_folder, "out")
+    if os.path.exists(out_dir):
+        preserved_out = out_dir + suffix
+        shutil.move(out_dir, preserved_out)
+        logger.info(f"[harness_upgrade] Preserved crash out dir to {preserved_out}")
+
+    for ext in (".c", ".out"):
+        src = os.path.splitext(code_file)[0] + ext
+        if os.path.isfile(src):
+            dst = os.path.splitext(code_file)[0] + suffix + ext
+            shutil.copy2(src, dst)
+            logger.info(f"[harness_upgrade] Preserved harness copy to {dst}")
+
 def _save_modified_seeds(seeds: List[seed_for_harness]) -> bool:
     for s in seeds:
         try:
             seed_path = Path(s.seed_save_path)
             seed_path.parent.mkdir(parents=True, exist_ok=True)
 
-            if (s.seed_encoding or "base64").lower() == "base64":
+            encoding = (s.seed_encoding or "base64").lower()
+            if encoding == "file":
+                if not seed_path.is_file():
+                    logger.error(f"[harness_upgrade] seed file missing: {seed_path}")
+                    return False
+                continue
+
+            if encoding == "base64":
                 try:
                     seed_bytes = base64.b64decode(s.seed_content_b64, validate=True)
                 except Exception as decode_err:
@@ -224,6 +258,7 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
                 # terminate the ongoing fuzzing process for this root_api
                 pid = batch.fuzzer_pids.get(root_api, None)
                 if pid:
+                    _preserve_crash_out(fuzzer_stats, code_save_folder, code_file)
                     _kill_fuzz_process(pid, code_save_folder)
                 
                 if start_fuzzing(batch=batch, selected_root_api=root_api):
@@ -239,6 +274,7 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             # terminate the ongoing fuzzing process for this root_api
             pid = batch.fuzzer_pids.get(root_api, None)
             if pid:
+                _preserve_crash_out(fuzzer_stats, code_save_folder, code_file)
                 _kill_fuzz_process(pid, code_save_folder)
             
             h.complete_compile_command()
@@ -279,6 +315,7 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             # terminate the ongoing fuzzing process for this root_api
             pid = batch.fuzzer_pids.get(root_api, None)
             if pid:
+                _preserve_crash_out(fuzzer_stats, code_save_folder, code_file)
                 _kill_fuzz_process(pid, code_save_folder)
             
             h.complete_compile_command()
@@ -317,6 +354,7 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
         # terminate the ongoing fuzzing process for this root_api
         pid = batch.fuzzer_pids.get(root_api, None)
         if pid:
+            _preserve_crash_out(fuzzer_stats, code_save_folder, code_file)
             _kill_fuzz_process(pid, code_save_folder)
         
         h.complete_compile_command()
