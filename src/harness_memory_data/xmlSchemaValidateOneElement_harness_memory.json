@@ -1,0 +1,53 @@
+{
+  "target_func": "xmlSchemaValidatorPopElem",
+  "root_api": "xmlSchemaValidateOneElement",
+  "lib_name": "libxml2",
+  "cve_id": "CVE-2025-32415",
+  "bug_class": "oob_read",
+  "distance_floor": 582.352941,
+  "conclusion": "running",
+  "iterations": [
+    {
+      "harness_path": "/root/auto_harness/src/harness/20260721_101253/20260721_101253_xmlSchemaValidatorPopElem.c",
+      "duration": "0.5h",
+      "expected_chain": [
+        "xmlSchemaValidateOneElement",
+        "xmlSchemaVStart",
+        "xmlSchemaValidatorPopElem"
+      ],
+      "upgrade_reason": "distance_plateau_period_suspected",
+      "llm_decision": "unknown",
+      "metrics": {
+        "coverage": 23.48,
+        "stability": 96.29,
+        "min_distance": 582.352941,
+        "max_distance": 850.0,
+        "crashes": 0,
+        "execs": 929751
+      },
+      "actual_chain": [
+        {
+          "func": "xmlSchemaValidateOneElement",
+          "reach_rate": 0.95
+        },
+        {
+          "func": "xmlSchemaVStart",
+          "reach_rate": 0.72
+        },
+        {
+          "func": "xmlSchemaValidatorPopElem",
+          "reach_rate": 0.12
+        }
+      ],
+      "gap": {
+        "broken_edge": [],
+        "furthest_hit": "xmlSchemaValidatorPopElem"
+      },
+      "marker_hit": {
+        "xmlschemas.c:23339": 0.035,
+        "xmlschemas.c:23390": 0.012
+      },
+      "id": 1
+    }
+  ]
+}

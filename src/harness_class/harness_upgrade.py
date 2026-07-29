@@ -14,6 +14,8 @@ from src.runtime_components.filter_merged_compile_pass_metadata import get_filte
 from src.runtime_components.get_runtime_trace_result import get_aggregate_runtime_trace_information
 from src.runtime_components.runtime_trace_feedback_analysis import add_to_regularized_fuzz, build_llm_feedback_prompt, build_llm_micro_tune_prompt
 from src.seed_generation.build_seed_generation_prompt import build_seed_generation_prompt
+from src.harness_memory.harness_memory import HarnessMemory
+from src.harness_memory.harness_fusion import HarnessFusion
 from src.utils.utils import get_logger
 
 logger = get_logger(__name__)
@@ -154,6 +156,164 @@ def _compute_target_reach_rate(trace_summary: Dict[str, Any], target_func_name: 
         "example_unreached_trace_ids": example_unreached,
     }
 
+    return True
+
+
+def _build_harness_memory_text(batch: Batch, plan: Dict, root_api: str,
+                                 target_func: str,
+                                 trace_summary: Dict[str, Any]) -> str:
+    root_plan = plan.get(root_api, {})
+    expected = root_plan.get("external_chain", []) or [
+        n.get("name", "?")
+        for n in root_plan.get("chain", {}).get("nodes", [])
+    ]
+
+    qt = trace_summary.get("queue_traces", {}) or {}
+    per_trace = trace_summary.get("per_trace", qt.get("per_trace", {})) or {}
+    total = len(per_trace)
+
+    func_counts = {}
+    for tid, info in per_trace.items():
+        seen = set()
+        for f in info.get("reached_functions", []) or []:
+            name = f.get("name", "")
+            if name and name not in seen:
+                func_counts[name] = func_counts.get(name, 0) + 1
+                seen.add(name)
+
+    actual_chain = []
+    for func in expected:
+        rate = func_counts.get(func, 0) / total if total > 0 else 0.0
+        actual_chain.append({"func": func, "reach_rate": round(rate, 4)})
+
+    furthest_hit = ""
+    broken_edge = []
+    for i, entry in enumerate(actual_chain):
+        if entry["reach_rate"] == 0:
+            if i == 0:
+                continue
+            if furthest_hit:
+                broken_edge = [furthest_hit, entry["func"]]
+            break
+        furthest_hit = entry["func"]
+    if not furthest_hit and actual_chain:
+        furthest_hit = actual_chain[-1]["func"]
+
+    agg_markers = trace_summary.get("aggregate", {}).get("markers", []) or []
+    if not agg_markers:
+        agg = qt.get("aggregate", {}) or {}
+        agg_markers = agg.get("markers", []) or []
+    marker_hit = {}
+    for mk in agg_markers:
+        if (mk.get("tag", "") or "").lower() == "bug_point":
+            f = mk.get("file", "")
+            ln = mk.get("line", 0)
+            hit_tr = mk.get("hit_traces", 0) or 0
+            rate = hit_tr / total if total > 0 else 0.0
+            key = f"{Path(f).name}:{ln}" if f else str(mk.get("local_id", "?"))
+            marker_hit[key] = round(rate, 3)
+
+    memory_json = json.dumps({
+        "expected_chain": expected,
+        "actual_chain": actual_chain,
+        "gap": {"broken_edge": broken_edge, "furthest_hit": furthest_hit},
+        "marker_hit": marker_hit,
+    }, indent=2, ensure_ascii=False)
+
+    return f"""=== Harness Memory ===
+
+Field explanations:
+- expected_chain: the intended call chain from entry API to target function.
+- actual_chain: functions in the chain that were ACTUALLY reached, with
+  reach_rate = fraction of seeds that reached each function.
+  IMPORTANT: reach_rate=0 for the FIRST function is NORMAL (compiler inlining).
+  Only worry if a function AFTER the first has reach_rate=0.
+- gap.broken_edge: first edge in the chain where a function is NEVER reached.
+  Empty means all tracked functions are reachable.
+- gap.furthest_hit: the deepest function reached in the chain.
+- marker_hit: fraction of seeds hitting each bug-point marker location.
+
+{memory_json}
+
+Call chain: {' -> '.join(expected)}
+Target: {target_func}"""
+
+
+def _is_fusion_rejected(root_api: str, harness_dir: str, harness_c_path: str,
+                        lib_name: str) -> bool:
+    if lib_name == "libxml2":
+        kw = "xml"
+    elif lib_name.startswith("lib"):
+        kw = lib_name[3:]
+    else:
+        kw = lib_name
+    reached_target = False
+    import glob as _glob
+    mem_files = sorted(_glob.glob(os.path.join(harness_dir, "*_harness_memory.json")))
+    if mem_files:
+        try:
+            mem = json.loads(Path(mem_files[-1]).read_text(encoding="utf-8"))
+            for it in mem.get("iterations", []):
+                ac = it.get("actual_chain", [])
+                if ac and ac[-1].get("reach_rate", 0) > 0:
+                    reached_target = True
+                    break
+        except Exception:
+            pass
+    logger.info(f"[harness_upgrade] Checking harness_fusion for {root_api} (reached_target={reached_target}, mem_files={len(mem_files)}, kw={kw})")
+    fusion = HarnessFusion.from_harness_dir(root_api, harness_dir,
+                                             keywords=[kw], threshold=0.85)
+    accepted = fusion.evaluate_new_harness(harness_c_path, reached_target=reached_target)
+    fusion.save(os.path.join(harness_dir, "harness_fusion.json"))
+    return not accepted
+
+
+def _retry_harness_until_novel(batch: Batch, root_api: str, h: harness,
+                                 code_save_folder: str, code_file: str,
+                                 llm: Any, plan: Dict, target_func: str,
+                                 harness_memory_text: str, fuzzer_stats: Dict) -> bool:
+    """Retry harness generation up to 5 times until fusion accepts it."""
+    from src.llm.LLM_prompt import HARNESS_REGENERATE_PROMPT
+    from src.utils.utils import extract_target_func_code_from_plan
+
+    for i in range(5):
+        target_source = extract_target_func_code_from_plan(plan, target_func)
+        cve_block = ""
+        try:
+            from src.cve_helper.cve_partial_prompt_render import render_cve_hints_for_codegen
+            cve_block = render_cve_hints_for_codegen(getattr(batch, "cve_hints", {}) or {}, target_api=target_func)
+        except Exception:
+            pass
+        plan_text = json.dumps(plan, indent=2, ensure_ascii=False)
+        prompt = HARNESS_REGENERATE_PROMPT.substitute(
+            lib_name=batch.lib_name,
+            target_func=target_func,
+            plan_json=plan_text,
+            harness_memory_text=harness_memory_text,
+            cve_hints_block=cve_block,
+            target_function_source=target_source,
+            bug_point_source_code_snippets="[]",
+        )
+        if not llm.regenerate_harness(h, prompt, regen_temperature=0.7):
+            logger.warning(f"[harness_upgrade] regenerate attempt {i+1} LLM call failed")
+            continue
+
+        if not h.compile_test():
+            for _ in range(3):
+                llm.harness_fix(h)
+                h.complete_compile_command()
+                if h.compile_test():
+                    break
+
+        if not _is_fusion_rejected(root_api, code_save_folder, code_file, batch.lib_name):
+            logger.info(f"[harness_upgrade] Regenerate attempt {i+1} accepted by fusion")
+            return True
+        logger.info(f"[harness_upgrade] Regenerate attempt {i+1} rejected by fusion")
+
+    logger.info(f"[harness_upgrade] All 5 regenerate attempts rejected, falling back to seed-only")
+    return False
+
+
 def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_threshold: float, reach_rate_repair_threshold: float, reach_rate_min_traces: int) -> bool:
     code = None
     code_file = batch.harness_info.get("harness_files", {}).get(root_api, "")
@@ -191,6 +351,69 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
 
     filtered_metadata_path = get_filtered_metadata_for_specific_root_api("/tmp", batch, root_api)
     sampled_cases_pathes, sampled_queue_seed_runtime_trace_result = get_aggregate_runtime_trace_information(batch, root_api, filtered_metadata_path, str(baseline_seeds_path))
+
+    # --- harness_memory ---
+    try:
+        plan_path = batch.harness_info.get("harness_plans_files", "")
+        mem = HarnessMemory.from_batch_and_plan(
+            batch.json_path, plan_path, root_api
+        ) if os.path.isfile(batch.json_path) and os.path.isfile(plan_path) else None
+        if mem is None:
+            mem = HarnessMemory(
+                target_func=batch.target_func,
+                root_api=root_api,
+                lib_name=batch.lib_name,
+            )
+            # bootstrap empty iteration from plan
+            plan_data = json.loads(Path(plan_path).read_text(encoding="utf-8")) if os.path.isfile(plan_path) else {}
+            root_plan = plan_data.get(root_api, {})
+            expected = root_plan.get("external_chain", []) or root_plan.get("chain", {}).get("nodes", [])
+            expected = [n.get("name", "?") for n in expected] if expected and isinstance(expected[0], dict) else expected
+            mem.add_iteration({
+                "harness_path": code_file,
+                "duration": "0.0h",
+                "expected_chain": expected,
+                "upgrade_reason": "triggered",
+                "llm_decision": "unknown",
+                "metrics": {},
+                "actual_chain": [],
+                "gap": {},
+                "marker_hit": {},
+            })
+        # re-index trace data to iteration 0 (latest)
+        trace_idx = len(mem.iterations) - 1 if mem.iterations else 0
+        mem.populate_trace_data(trace_idx, sampled_queue_seed_runtime_trace_result)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        mem_file = os.path.join(code_save_folder, f"{ts}_harness_memory.json")
+        mem.save(mem_file)
+        # backup old harness
+        for ext in (".c", ".out"):
+            src = os.path.splitext(code_file)[0] + ext
+            if os.path.isfile(src):
+                dst = os.path.join(code_save_folder, f"{ts}_old{ext}")
+                shutil.copy2(src, dst)
+                logger.info(f"[harness_upgrade] Backed up old harness: {dst}")
+        # dedup identical old.c copies (seed-only upgrades produce duplicates)
+        import filecmp as _filecmp
+        old_files = sorted([f for f in os.listdir(code_save_folder) if f.endswith("_old.c")])
+        for i in range(len(old_files)):
+            for j in range(i + 1, len(old_files)):
+                fa = os.path.join(code_save_folder, old_files[i])
+                fb = os.path.join(code_save_folder, old_files[j])
+                if _filecmp.cmp(fa, fb, shallow=False):
+                    # delete the older one (keep the newer timestamp)
+                    os.remove(fa)
+                    # also remove matching harness_memory and _old.out
+                    prefix = old_files[i].replace("_old.c", "")
+                    for suffix in ("_harness_memory.json", "_old.out"):
+                        extra = os.path.join(code_save_folder, f"{prefix}{suffix}")
+                        if os.path.isfile(extra):
+                            os.remove(extra)
+                    logger.info(f"[harness_upgrade] Dedup: removed duplicate {old_files[i]} (identical to {old_files[j]})")
+                    break
+    except Exception as e:
+        logger.warning(f"[harness_upgrade] Failed to save harness_memory: {e}")
+    # ---
 
     is_regularized = add_to_regularized_fuzz(sampled_queue_seed_runtime_trace_result)
     if is_regularized:
@@ -234,10 +457,15 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
         
         sampled_queue_seed_runtime_trace_result["mode"] = mode
 
+        harness_memory_text = _build_harness_memory_text(
+            batch, plan, root_api, target_func,
+            sampled_queue_seed_runtime_trace_result,
+        )
+
         if mode == "micro_upgrade":
-            prompt = build_llm_micro_tune_prompt(batch, sampled_queue_seed_runtime_trace_result, target_func, code_file, baseline_seeds, sampled_cases_pathes)
+            prompt = build_llm_micro_tune_prompt(batch, sampled_queue_seed_runtime_trace_result, target_func, code_file, baseline_seeds, sampled_cases_pathes, harness_memory_text=harness_memory_text)
         else:
-            prompt = build_llm_feedback_prompt(batch, sampled_queue_seed_runtime_trace_result, target_func, code_file, baseline_seeds, sampled_cases_pathes)
+            prompt = build_llm_feedback_prompt(batch, sampled_queue_seed_runtime_trace_result, target_func, code_file, baseline_seeds, sampled_cases_pathes, harness_memory_text=harness_memory_text)
         # >>>
 
         #prompt = build_llm_feedback_prompt(batch, sampled_queue_seed_runtime_trace_result, code_file, baseline_seeds, sampled_cases_pathes)
@@ -247,27 +475,19 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
 
         type, response = llm.phased_harness_upgrade_2(h, prompt)
         if type == "only_modified_seeds":
-            #_save_modified_seeds(response)
             seed_generation_prompt = build_seed_generation_prompt(batch, sampled_queue_seed_runtime_trace_result, code_file, baseline_seeds)
             seeds_content = llm.llm_seed_generation(h, seed_generation_prompt)
-            # _clean_up_seed_files(baseline_seeds_path)
             upgrade_flag = _save_modified_seeds(seeds_content)
             if upgrade_flag:
                 logger.info(f"[Harness_upgrade2] Seeds upgrade success for root api {root_api} in function {batch.target_func}")
-                
-                # terminate the ongoing fuzzing process for this root_api
-                pid = batch.fuzzer_pids.get(root_api, None)
-                if pid:
-                    _preserve_crash_out(fuzzer_stats, code_save_folder, code_file)
-                    _kill_fuzz_process(pid, code_save_folder)
-                
-                if start_fuzzing(batch=batch, selected_root_api=root_api):
-                    logger.info(f"[Harness_upgrade2] Upgrade seeds and restarted fuzzing process for upgraded seeds of root API {root_api}")
-                    return True
-                else:
-                    logger.error(f"[Harness_upgrade2] Failed to restart fuzzing process for upgraded seeds of root API {root_api}")
-                    return False
-            
+                _preserve_crash_out(fuzzer_stats, code_save_folder, code_file)
+                try:
+                    call_chain = plan[root_api].get("external_chain", []) or [
+                        n.get("name", "?") for n in plan[root_api].get("chain", {}).get("nodes", [])
+                    ]
+                    llm.generate_dict(h, call_chain, harness_memory_text=harness_memory_text)
+                except Exception as e:
+                    logger.warning(f"[harness_upgrade] Dict upgrade failed: {e}")
             return True
         
         elif type == "only_modified_harness":
@@ -289,6 +509,10 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
                 fix_count += 1
             
             if ava_flag == True:
+                if _is_fusion_rejected(root_api, code_save_folder, code_file, batch.lib_name):
+                    if not _retry_harness_until_novel(batch, root_api, h, code_save_folder, code_file, llm, plan, target_func, harness_memory_text, fuzzer_stats):
+                        logger.info(f"[Harness_upgrade2] All retries rejected for {root_api}, falling back to seed-only")
+                        return True
                 logger.info(f"[Harness_upgrade2] Harness upgrade success for root api {root_api} in function {batch.target_func}")
 
                 # Restart the fuzz process for this root_api
@@ -330,6 +554,10 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
                 fix_count += 1
             
             if ava_flag == True:
+                if _is_fusion_rejected(root_api, code_save_folder, code_file, batch.lib_name):
+                    if not _retry_harness_until_novel(batch, root_api, h, code_save_folder, code_file, llm, plan, target_func, harness_memory_text, fuzzer_stats):
+                        logger.info(f"[Harness_upgrade2] All retries rejected, falling back to seed-only for {root_api}")
+                        return True
                 logger.info(f"[Harness_upgrade2] Harness upgrade success for root api {root_api} in function {batch.target_func}")
 
                 # Restart the fuzz process for this root_api
@@ -369,9 +597,12 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
             fix_count += 1
         
         if ava_flag == True:
+            if _is_fusion_rejected(root_api, code_save_folder, code_file, batch.lib_name):
+                hm_text = _build_harness_memory_text(batch, plan, root_api, target_func, sampled_queue_seed_runtime_trace_result)
+                if not _retry_harness_until_novel(batch, root_api, h, code_save_folder, code_file, llm, plan, target_func, hm_text, fuzzer_stats):
+                    logger.info(f"[Harness_upgrade1] All retries rejected for {root_api}, falling back to seed-only")
+                    return True
             logger.info(f"[Harness_upgrade1] Harness Upgrade1 success for root api {root_api} in function {batch.target_func}")
-
-            # Restart the fuzz process for this root_api
             if start_fuzzing(batch=batch, selected_root_api=root_api):
                 logger.info(f"[Harness_upgrade1] Upgrade harness and restarted fuzzing process for upgraded harness of root API {root_api}")
                 return True

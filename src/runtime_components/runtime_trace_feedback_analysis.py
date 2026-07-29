@@ -813,12 +813,13 @@ def build_llm_feedback_prompt(
     harness_path: Optional[str] = None,
     baseline_seeds: Optional[List[Path]] = None,
     queue_seed_examples: Optional[List[Path]] = None,
+    harness_memory_text: Optional[str] = None,
 ) -> str:
     root_api = trace_summary.get("root_api", "<unknown>")
     plan = Path(batch.harness_info.get("harness_plans_files", "{}"))
     plan = json.loads(plan.read_text(encoding="utf-8", errors="ignore")).get(root_api, {})
     call_chain = plan.get("chain", {}).get("id", "<unknown>")
-    events = analyze_trace_summary_for_llm(trace_summary, queue_seed_examples, target_func_name)
+    events = [] if harness_memory_text else analyze_trace_summary_for_llm(trace_summary, queue_seed_examples, target_func_name)
 
     lines: List[str] = []
 
@@ -919,26 +920,27 @@ def build_llm_feedback_prompt(
     #     lines.append("")
     
     lines.append("=== High-level observations from runtime traces ===")
-    lines.append("The following observations are extracted from analyzing the runtime traces of both baseline and queue seeds. Please use these insights to guide your suggestions for improving the harness and seed corpus.\n")
-    for ev in events:
-        lines.append(f"- [{ev.type}] {ev.short_summary}")
-    lines.append("")
-
-    lines.append("=== Technical details ===")
-    lines.append("Below are detailed analyses and findings from the runtime trace data:\n")
-    for ev in events:
-        lines.append(f"[*] {ev.type}:")
-        lines.append(ev.details)
+    if harness_memory_text:
+        lines.append(harness_memory_text)
+    else:
+        lines.append("The following observations are extracted from analyzing the runtime traces of both baseline and queue seeds. Please use these insights to guide your suggestions for improving the harness and seed corpus.\n")
+        for ev in events:
+            lines.append(f"- [{ev.type}] {ev.short_summary}")
         lines.append("")
-    lines.append("")
 
-    lines.append("=== What you should focus on ===")
-    lines.append("Based on the above observations, please focus on the following aspects when proposing improvements:\n")
-    for ev in events:
-        lines.append(f"- ({ev.type}) {ev.suggested_foucs}")
-    lines.append("")
+        lines.append("=== Technical details ===")
+        lines.append("Below are detailed analyses and findings from the runtime trace data:\n")
+        for ev in events:
+            lines.append(f"[*] {ev.type}:")
+            lines.append(ev.details)
+            lines.append("")
+        lines.append("")
 
-    #print(lines)
+        lines.append("=== What you should focus on ===")
+        lines.append("Based on the above observations, please focus on the following aspects when proposing improvements:\n")
+        for ev in events:
+            lines.append(f"- ({ev.type}) {ev.suggested_foucs}")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -949,6 +951,7 @@ def build_llm_micro_tune_prompt(
     harness_path: Optional[str] = None,
     baseline_seeds: Optional[List[Path]] = None,
     queue_seed_examples: Optional[List[Path]] = None,
+    harness_memory_text: Optional[str] = None,
 ) -> str:
 
     root_api = trace_summary.get("root_api", "<unknown>")
@@ -976,11 +979,11 @@ def build_llm_micro_tune_prompt(
 
     marker_kpi_block = _marker_build_kpi_block(trace_summary)
 
-    events = analyze_trace_summary_for_llm(trace_summary, queue_seed_examples, target_func_name)
+    events = [] if harness_memory_text else analyze_trace_summary_for_llm(trace_summary, queue_seed_examples, target_func_name)
 
     # [MOD] 事件过滤 + 排序：marker 先，target_ 次之，windowed entropy/bias 再次
     events = _micro_tune_event_filter(events)
-    events_sorted: List[LLMEvent] = sorted(events, key=_micro_tune_event_rank)
+    events_sorted: List[LLMEvent] = sorted(events, key=_micro_tune_event_rank) if events else []
 
     lines: List[str] = []
 
@@ -1109,31 +1112,34 @@ def build_llm_micro_tune_prompt(
 
     # High-level observations (marker events should come first by rank)
     lines.append("=== High-level observations from runtime traces ===")
-    lines.append("Use the following observations to steer MICRO-TUNING. Keep the focus on marker progress and target-internal gating conditions.\n")
-    for ev in events_sorted:
-        lines.append(f"- [{ev.type}] {ev.short_summary}")
-    lines.append("")
-
-    # Technical details
-    lines.append("=== Technical details ===")
-    lines.append("Below are detailed analyses extracted from the runtime trace data:\n")
-    for ev in events_sorted:
-        lines.append(f"[*] {ev.type}:")
-        lines.append(ev.details)
+    if harness_memory_text:
+        lines.append(harness_memory_text)
+    else:
+        lines.append("Use the following observations to steer MICRO-TUNING. Keep the focus on marker progress and target-internal gating conditions.\n")
+        for ev in events_sorted:
+            lines.append(f"- [{ev.type}] {ev.short_summary}")
         lines.append("")
-    lines.append("")
 
-    # Focus list (marker first, entropy/bias second)
-    lines.append("=== What you should focus on ===")
-    lines.append(
-        "Prioritize these MICRO-TUNE objectives:\n"
-        "1) Preserve target reachability (do not reduce reach_rate).\n"
-        "2) Advance marker progress (furthest_marker -> bug_point) and improve bug_point hit_rate.\n"
-        "3) Flip biased / low-entropy branches that block marker progress (prefer windowed/marker-related signals).\n"
-        "4) Keep changes minimal and controlled; prefer seed edits over harness rewrites.\n"
-    )
-    for ev in events_sorted:
-        lines.append(f"- ({ev.type}) {ev.suggested_foucs}")
+        # Technical details
+        lines.append("=== Technical details ===")
+        lines.append("Below are detailed analyses extracted from the runtime trace data:\n")
+        for ev in events_sorted:
+            lines.append(f"[*] {ev.type}:")
+            lines.append(ev.details)
+            lines.append("")
+        lines.append("")
+
+        # Focus list (marker first, entropy/bias second)
+        lines.append("=== What you should focus on ===")
+        lines.append(
+            "Prioritize these MICRO-TUNE objectives:\n"
+            "1) Preserve target reachability (do not reduce reach_rate).\n"
+            "2) Advance marker progress (furthest_marker -> bug_point) and improve bug_point hit_rate.\n"
+            "3) Flip biased / low-entropy branches that block marker progress (prefer windowed/marker-related signals).\n"
+            "4) Keep changes minimal and controlled; prefer seed edits over harness rewrites.\n"
+        )
+        for ev in events_sorted:
+            lines.append(f"- ({ev.type}) {ev.suggested_foucs}")
     lines.append("")
 
     return "\n".join(lines)

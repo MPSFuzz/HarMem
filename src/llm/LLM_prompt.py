@@ -502,6 +502,7 @@ DICT_GENERATE_PROMPT = """
         - Do NOT include surrounding quotes in "value"; just the raw token content.
         - Do NOT output Markdown.
         - Do NOT output anything outside that single JSON object.
+        %s
         """
 
 PHASED_FEEDBACK_IMPROVE_PROMPT = """
@@ -1068,3 +1069,68 @@ STRUCTURAL_REFINE_PROMPT = Template("""
         #     * "internal": static/internal helper; MUST NOT be called directly from the harness.
         # - external_chain: preferred sequence of external APIs.
         # - resources, lifecycle_plan, bitmask_bundles, harness_hint, etc.
+
+HARNESS_REGENERATE_PROMPT = Template("""
+        You are an expert in fuzz testing and C programming.
+
+        Your ONLY task is to generate a NEW harness for the open-source library ${lib_name}
+        that targets the function ${target_func} (ignoring suffixes such as __internal_alias).
+
+        The previous harness was rejected by a similarity check — it was too similar to
+        previously accepted harnesses. You MUST generate a harness that uses noticeably
+        different API calls, different object construction patterns, or different call
+        chains while still reaching the target.
+
+        IMPORTANT:
+        - Do NOT output explanations.
+        - Your entire reply MUST be a single valid JSON object and nothing else.
+
+        You are given:
+
+        1) A static analysis plan (JSON) for the target call chain
+        2) Harness Memory showing previous harness performance and similarity
+        3) CVE-aware bug reproduction constraints (if available)
+        4) Source code of the target function
+        5) Code snippets near the target bug point (if available)
+
+        ==================== Static Analysis PLAN (JSON) ====================
+        ${plan_json}
+
+        ==================== Harness Memory ====================
+        ${harness_memory_text}
+
+        ==================== CVE(or bug) Hints ====================
+        ${cve_hints_block}
+
+        ==================== Source Code of The Target Function ====================
+        ```c
+        ${target_function_source}
+        ```
+
+        ==================== Code Snippets of The Target Bug Point ====================
+        ```
+        ${bug_point_source_code_snippets}
+        ```
+
+        ==================== YOUR TASK ====================
+
+        You MUST generate a COMPLETE, COMPILABLE harness in C or C++ in JSON form.
+        The harness must read fuzz input from argv[1] and use a persistent AFL loop.
+
+        Primary rule:
+        - Generate a harness that is STRUCTURALLY DIFFERENT from what has been tried before.
+        - Use different public API entry points, different initialization patterns,
+          or different library subsystems to reach the target.
+        - If the plan shows multiple call chains or external functions, prefer a
+          different chain than what was used in previous harnesses.
+
+        Output format (STRICT JSON):
+        {
+        "code": "<the COMPLETE C source of the fuzz harness>",
+        "compile_command": "<the compile command>"
+        }
+
+        The compile command MUST follow the pattern:
+            aflgo-clang -g -O2 -fsanitize=address a.c -o a.out $(pkg-config --cflags --libs XXX)
+        Replace XXX with the correct pkg-config name (e.g., "libxml-2.0").
+""")

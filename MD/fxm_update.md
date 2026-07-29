@@ -57,8 +57,36 @@ solved: 将提示词中生成base64的部分修改，让大模型生成 _seed_ge
     ─ 否 → 正常走 COARSE/FINE 升级流程
 
 
+5. 更新harness 升级的判定方式。  现有方案，即使coverage, stability得分都很高，但是epoch里距离没有缩小，还是会更新harness，这个更新是直接丢弃旧的harness，换新的重跑。有些harness就是需要更多时间的，现有方案导致每个harenss只能跑1个epoch,也就是30-60分钟。 
+   fxm update: FINE 阶段的升级逻辑现在（改动代码只有src/scheduler/schedule_controller.py）：
+        distance_plateau 且 harness 高质量(cov≥1.0, stab≥1.0)?
+        ├─ coverage 涨了（要超过0.03才算） → 跳过升级，计数器归零，继续跑
+        ├─ coverage 没涨 → 容忍3次，第4次才升级
+        └─ 3次耗尽 或 harness 质量不达标 → 正常升级流程
+
+    现在判定升级，如果只升级种子也会清理进程。修改成不杀死进程，直接更新in/， afl-fuzz会定期扫描 in/，所以这么改几乎没有影响。
+
+
+6. 现在让LLM判定是更新harness 还是seed，会给很多信息：
+fuzzer_stats 原始数据（execs, coverage, distance, crashes）
+analysis_result（issues, hints, scores, plateau_diag）
+static plans（调用链、函数签名、lifecycle）
+harness 源码
+trace 聚合数据（reached_functions, markers）
+这些其实在harness_memory里就有体现，把 fuzzer_stats + analysis_result + trace 三块换成一段 harness_memory JSON，token 量砍掉 60%+，LLM 响应更快、判断更准，不会被 raw stats 噪音干扰
+    fxm: 具体改动如下：
+    harness_upgrade.py：
+      - 新增 _build_harness_memory_text() 函数，从 trace_summary 提取 expected_chain、actual_chain、gap、marker_hit，拼成带字段解释的文本块
+      - build_llm_feedback_prompt / build_llm_micro_tune_prompt 调用时传入 harness_memory_text
+    runtime_trace_feedback_analysis.py：
+      - 两个 prompt 构建函数新增 harness_memory_text 参数，插入到 "High-level observations" 区域顶部
+！！说明：就一次 LLM 调用。LLM 收到 prompt，同时做两件事：决定要不要改 harness + 生成新 harness 代码
+
+
 
 ## 一些重要的提升，但是过于复杂，暂时不加
+
+TODO0:  !!这个后面必须要改。现在harness_fusion中看jaccard距离用的 nm 查看二进制中符号，需要grep 关键字，目前是通过 libname推断的，比如libxml2推断 xml， 这个是硬编码。后续要改
 
 TODO1:  优化计算距离的代码。用AFLGO的代码有些老。 重点看get_distance_fast.py
 TODO2:  目前是手工设置BBtarget.txt以及 Ftarget.txt， 做成LLM-based 自动生成

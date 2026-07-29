@@ -190,6 +190,7 @@ def start_fuzzing(batch_id: Optional[str] = None,  batch: Optional[Batch] = None
             logger.error(f"[fuzz] batch metadata not found: {file_path}")
             return None
         batch_instance = Batch.load_metadata(file_path)
+        batch_instance.json_path = file_path
 
         harness_info: Dict[str, Any] = batch_instance.harness_info
 

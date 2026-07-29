@@ -52,6 +52,8 @@ class EpochScheduler:
         self.window_mgr = FuzzStatsWindowManager()
         self._last_crash_count: Dict[str, int] = {}
         self._crash_bonus_until: Dict[str, float] = {}
+        self._last_cov: Dict[str, float] = {}
+        self._cov_stagnate: Dict[str, int] = {}
     
     def _ensure(self, batch: Batch):
         now = time.time()
@@ -349,11 +351,33 @@ class EpochScheduler:
                         self.plateau_streak[root_api] = 0
                 else:
                     if "distance_plateau_period_suspected" in issues and self.plateau_streak[root_api] >= self.epoch_config.plateau_k:
+                        scores = analysis.get("scores", {}) or {}
+                        if scores.get("coverage_score", 0) >= 1.0 and scores.get("stability_score", 0) >= 1.0:
+                            cur_cov = stats.get("bitmap_cvg", 0.0) or 0.0
+                            prev_cov = self._last_cov.get(root_api, 0.0)
+                            self._last_cov[root_api] = cur_cov
+                            if cur_cov > prev_cov + 0.02:
+                                self._cov_stagnate[root_api] = 0
+                                logger.info(f"[scheduler] {root_api}: high quality harness, coverage still improving ({prev_cov:.2f}%→{cur_cov:.2f}%), skip upgrade")
+                                self.phase[root_api] = Phase.FINE
+                                self.epoch_start_ts[root_api] = time.time()
+                                self.plateau_streak[root_api] = 0
+                                continue
+                            else:
+                                self._cov_stagnate[root_api] = self._cov_stagnate.get(root_api, 0) + 1
+                                if self._cov_stagnate[root_api] < 3:
+                                    logger.info(f"[scheduler] {root_api}: high quality harness, coverage not improving ({self._cov_stagnate[root_api]}/3), skip upgrade")
+                                    self.phase[root_api] = Phase.FINE
+                                    self.epoch_start_ts[root_api] = time.time()
+                                    self.plateau_streak[root_api] = 0
+                                    continue
+                                else:
+                                    logger.info(f"[scheduler] {root_api}: high quality skip exhausted ({self._cov_stagnate[root_api]}/3), proceeding with upgrade")
                         logger.info(f"[scheduler] Fine grain analysis for root API {root_api} in batch {batch.batch_id} detected distance plateau.")
                         if self._safe_upgrade(batch, root_api):
                             self._reset_after_upgrade(root_api)
-                        else:
-                            pass
+                        self._cov_stagnate[root_api] = 0
+                        self._last_cov[root_api] = 0.0
                     else:
                         self.phase[root_api] = Phase.FINE
                         self.epoch_start_ts[root_api] = time.time()

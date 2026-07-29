@@ -31,7 +31,7 @@ class LLM:
         self.target_location = target_location
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.timeout = timeout or int(os.environ.get("LLM_TIMEOUT", "120"))
+        self.timeout = timeout or int(os.environ.get("LLM_TIMEOUT", "180"))
         self.model = model or os.environ.get("LLM_MODEL") or "gpt-5.4"
 
         # cve_helper related attributes
@@ -136,6 +136,33 @@ class LLM:
                     logger.error(f"[Error] get_harness_skeleton failed after {self.max_retries} attempts")
                     return None
 
+
+    def regenerate_harness(self, h: harness, prompt: str, regen_temperature: float = 0.7):
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = openai.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+                    temperature=regen_temperature,
+                    top_p=1.0,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    timeout=self.timeout,
+                )
+                result = extract_json_from_text(response.choices[0].message.content)
+                result = clean_markdown_format(result)
+                content = json.loads(result)
+                h.code = content["code"]
+                h.compile_command = content["compile_command"]
+                h.save_code_to_file()
+                h.complete_compile_command()
+                logger.info(f"[LLM] regenerate_harness attempt {attempt} succeeded")
+                return True
+            except Exception as e:
+                logger.warning(f"[LLM] regenerate_harness attempt {attempt} failed: {e}")
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_delay)
+        return False
 
     def generate_code(self, h: harness, call_chain):
         # [more details] >>>
@@ -248,7 +275,7 @@ class LLM:
                     logger.error(f"[Error] harness_fix failed after {self.max_retries} attempts")
                     return h
 
-    def generate_dict(self, h: harness, call_chain, min_weight: int = 3):
+    def generate_dict(self, h: harness, call_chain, min_weight: int = 3, harness_memory_text: str = ""):
         for attempt in range(1, self.max_retries + 1):
             try:
                 plan_json = json.dumps(self.plan, indent=2)
@@ -260,6 +287,7 @@ class LLM:
                     plan_json,
                     harness_code,
                     self.target_func,
+                    harness_memory_text or "",
                 )
 
                 response = openai.chat.completions.create(
@@ -289,7 +317,7 @@ class LLM:
                     content = json.loads(result)
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON decode error during generate_dict: {e}")
-                
+
                 tokens = content.get("tokens", [])
 
                 cleaned_tokens = []
@@ -307,26 +335,38 @@ class LLM:
                         w = min_weight
                     if w < min_weight:
                         continue
-
                     if v in seen:
                         continue
                     seen.add(v)
                     cleaned_tokens.append(v)
-                
+
                 if not cleaned_tokens:
                     logger.warning(f"[Warning] No valid tokens generated for call_chain {call_chain}")
-                
+                    return
+
                 p = Path(h.code_file)
                 p = str(p.parent)
                 dict_save_file = os.path.join(p, "harness_dict.dict")
+
+                # merge with existing dict, dedup by line content
+                old_lines = []
+                if os.path.isfile(dict_save_file):
+                    try:
+                        with open(dict_save_file, "r", encoding="utf-8") as f:
+                            old_lines = [l.rstrip("\n") for l in f.readlines() if l.strip()]
+                    except Exception:
+                        pass
+
+                old_set = set(old_lines)
+                new_lines = [bytes_to_afl_dict_line(token_to_bytes(v)) for v in cleaned_tokens]
+                added = [l for l in new_lines if l not in old_set]
+                merged = old_lines + added
+
                 with open(dict_save_file, "w", encoding="utf-8") as f:
-                    for v in cleaned_tokens:
-                        token_bytes = token_to_bytes(v)
-                        afl_dict_line = bytes_to_afl_dict_line(token_bytes)
-                        f.write(afl_dict_line)
-                        f.write("\n")
-                
-                logger.info(f"Saved harness dictionary to {dict_save_file}")
+                    for line in merged:
+                        f.write(line + "\n")
+
+                logger.info(f"[LLM] Dict upgraded: {len(added)} new tokens added, {len(merged)} total in {dict_save_file}")
                 return
                 
             except Exception as e:
