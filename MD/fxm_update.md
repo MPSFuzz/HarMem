@@ -83,13 +83,18 @@ trace 聚合数据（reached_functions, markers）
 ！！说明：就一次 LLM 调用。LLM 收到 prompt，同时做两件事：决定要不要改 harness + 生成新 harness 代码
 
 
+7. 更新了一点aflgo的源码，对能够触达最后一跳的种子，能量*5. 具体操作是，当框架触发 only_modify_seed时，out/下保存一个seed_boost.txt 里面都是能到最后一跳的种子，然后框架发送一个SIGUSR信号给afl-fuzz， af-fuzz收到信号读这个txt，更新boost_map这个结构（这是一个长时间维护的数据结构），更新种子的能量。 由于是在/root/aflgo下更新的afl-fuzz，框架里默认用的是auto_harness/aflgo_component/下的，所以cp了一份过去
+
+8. 现在harness_fusion中看jaccard距离用的 nm 查看二进制中符号，需要grep 关键字，已经改成了通过 -k 关键字 手动提供。
+
 
 ## 一些重要的提升，但是过于复杂，暂时不加
 
-TODO0:  !!这个后面必须要改。现在harness_fusion中看jaccard距离用的 nm 查看二进制中符号，需要grep 关键字，目前是通过 libname推断的，比如libxml2推断 xml， 这个是硬编码。后续要改
+
 
 TODO1:  优化计算距离的代码。用AFLGO的代码有些老。 重点看get_distance_fast.py
 TODO2:  目前是手工设置BBtarget.txt以及 Ftarget.txt， 做成LLM-based 自动生成
 TODO3:  有些harness写的不对，能编译，但是一跑就报错，可能是harness里不当的free，对于这种秒级报错，应该警惕harness的质量
+还有一些seed_generator产生的种子会导致 afl-fuzz 100轮的3秒检查都过不去，说明种子生成器或者harness有问题。 是修harness还是放弃harness（倾向于修）
 
 

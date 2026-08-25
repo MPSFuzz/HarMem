@@ -36,7 +36,7 @@ class EpochConfig:
     target_reach_rate_min_traces: int  = 10    # need at least 15 traces to consider reach rate
     plateau_k: int = 2            # require at least k points to consider plateau detection
     crash_k: int = 2              # require at least k points to consider process is dead
-    empty_feedback_k: int = 3     # require at least k consecutive empty feedback collections to evict a root_api
+    empty_feedback_k: int = 100   # 300s tolerance (100 polls × 3s)
 
 class EpochScheduler:
     def __init__(self, config: Optional[EpochConfig]):
@@ -262,6 +262,8 @@ class EpochScheduler:
                     continue
 
                 self.crash_streak[root_api] += 1
+                if self.phase.get(root_api) == Phase.REGULARIZED and self.crash_streak[root_api] == 1:
+                    logger.warning(f"[scheduler] REGULARIZED harness {root_api} process (pid={pid}) not alive, streak={self.crash_streak[root_api]}/{self.epoch_config.crash_k}")
                 if self.crash_streak[root_api] >= self.epoch_config.crash_k:
                     logger.info(f"[scheduler] Fuzzing process for root API {root_api} in batch {batch.batch_id} has crashed. Try to restart.")
                     start_fuzzing(batch=batch, selected_root_api=root_api)

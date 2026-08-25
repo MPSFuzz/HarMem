@@ -81,16 +81,39 @@ class harness:
         if self.compile_command and not re.search(r'-fsanitize=', self.compile_command):
             self.compile_command = re.sub(
                 r'(aflgo-clang\S*|afl-clang\S*|clang\b)',
-                r'\1 -fsanitize=address',
+                r'\1 -fsanitize=address,float-divide-by-zero,undefined',
                 self.compile_command,
                 count=1
             )
-            logger.info("Auto-appended -fsanitize=address to compile command")
+            logger.info("Auto-appended -fsanitize=address,float-divide-by-zero,undefined to compile command")
+
+    def _inject_pkg_config_flags(self):
+        # If AFLGO_PKG_NAME is set, resolve the library link flags via pkg-config
+        # and append them, instead of relying on the LLM's guess of the library
+        # path/type (which is often wrong, e.g. referencing a static libmagic.a).
+        pkg_name = os.environ.get("AFLGO_PKG_NAME", "").strip()
+        if not pkg_name or not self.compile_command:
+            return
+        try:
+            flags = subprocess.check_output(
+                ["pkg-config", "--cflags", "--libs", pkg_name],
+                text=True, timeout=10
+            ).strip()
+        except Exception as e:
+            logger.warning(f"[harness] pkg-config for {pkg_name} failed: {e}")
+            return
+        if not flags:
+            return
+        # Drop wrong static-library paths (the experiment builds use --disable-static).
+        self.compile_command = re.sub(r'\S+\.a\b', '', self.compile_command)
+        self.compile_command = self.compile_command.rstrip() + " " + flags
+        logger.info(f"[harness] Injected pkg-config flags ({pkg_name}): {flags}")
 
     def compile_test(self) -> bool:
         env = os.environ.copy()
         env.update(self._get_env_var())
         self._ensure_compile_sanitizer()
+        self._inject_pkg_config_flags()
 
         try:
             self.compile_result = subprocess.run(

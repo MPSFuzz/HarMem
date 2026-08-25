@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+import shlex
 
 from typing import Dict, Any, Optional, List
 from pathlib import Path
@@ -13,8 +14,12 @@ logger = get_logger(__name__)
 _shell_env_cache: Optional[dict] = None
 
 
-def _execute_seed_generator(generator_code: str, out_dir: str, timeout: int = 30) -> List[str]:
-    script_path = os.path.join(out_dir, "_seed_gen.py")
+def _execute_seed_generator(generator_code: str, out_dir: str, script_dir: str = None, timeout: int = 30) -> List[str]:
+    import datetime as _dt
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_dir = script_dir or out_dir
+    os.makedirs(save_dir, exist_ok=True)
+    script_path = os.path.join(save_dir, f"seed_gen_{ts}.py")
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(generator_code)
     try:
@@ -28,13 +33,16 @@ def _execute_seed_generator(generator_code: str, out_dir: str, timeout: int = 30
         seed_patterns = ["seed_", "input_", "fuzz_", "test_"]
         generated = []
         for entry in sorted(os.listdir(out_dir)):
-            if entry == "_seed_gen.py":
+            if entry == os.path.basename(script_path):
                 continue
             for prefix in seed_patterns:
                 if entry.startswith(prefix):
                     generated.append(os.path.join(out_dir, entry))
                     break
-        logger.info(f"[seed_gen] generator produced {len(generated)} seed files, stdout: {proc.stdout.strip()}")
+        if not generated:
+            logger.warning(f"[seed_gen] generator produced 0 seeds, rc=0 but stderr:\n{proc.stderr[:500]}")
+        else:
+            logger.info(f"[seed_gen] generator produced {len(generated)} seed files, script saved to {script_path}")
         return generated
     except subprocess.TimeoutExpired:
         logger.error(f"[seed_gen] generator timed out after {timeout}s")
@@ -42,11 +50,6 @@ def _execute_seed_generator(generator_code: str, out_dir: str, timeout: int = 30
     except Exception as e:
         logger.error(f"[seed_gen] generator execution error: {e}")
         return []
-    finally:
-        try:
-            os.remove(script_path)
-        except OSError:
-            pass
 
 def _process_harness_path(harness_sourcecode_path: str) -> str:
     p = Path(harness_sourcecode_path)
@@ -70,6 +73,36 @@ def _ensure_seed_dir(input_path: str, seeds_path: Optional[str]=None) -> None:
         with open(seed_path, "w", encoding="utf-8") as f:
             f.write("111\n")
         logger.info(f"[fuzz] created default seed at {seed_path}")
+
+
+def _generate_initial_seeds(harness_sourcecode_path: str, batch: Batch):
+    """Generate initial seeds via LLM if in/ is empty."""
+    harness_dir = os.path.dirname(harness_sourcecode_path)
+    input_dir = os.path.join(harness_dir, "in")
+    os.makedirs(input_dir, exist_ok=True)
+    if any(Path(input_dir).iterdir()):
+        return
+    try:
+        from src.llm.LLM_class import LLM
+        from src.seed_generation.build_seed_generation_prompt import build_seed_generation_prompt
+        from src.harness_class.harness_class import harness, seed_for_harness
+        from src.harness_class.harness_upgrade import _save_modified_seeds
+        import json as _json
+        plan_path = batch.harness_info.get("harness_plans_files", "")
+        plan = _json.loads(Path(plan_path).read_text(encoding="utf-8", errors="ignore")) if plan_path and os.path.isfile(plan_path) else {}
+        root_api = [k for k, v in batch.harness_info.get("harness_files", {}).items() if v == harness_sourcecode_path]
+        root_api = root_api[0] if root_api else ""
+        llm = LLM(target_func=batch.target_func)
+        h = harness(code_file=harness_sourcecode_path, code_save_folder=harness_dir, target_func=batch.target_func)
+        h.code = Path(harness_sourcecode_path).read_text(encoding="utf-8", errors="ignore")
+        trace_summary_mock = {"root_api": root_api}
+        prompt = build_seed_generation_prompt(batch, trace_summary_mock, harness_path=harness_sourcecode_path)
+        seeds = llm.llm_seed_generation(h, prompt)
+        if seeds:
+            _save_modified_seeds(seeds)
+            logger.info(f"[fuzz] LLM generated {len(seeds)} initial seeds for {root_api}")
+    except Exception as e:
+        logger.warning(f"[fuzz] LLM initial seed generation failed: {e}")
 
 def _generate_fuzz_command(harness_path: str, seeds_path: Optional[str]=None) -> str:
     p = Path(harness_path)
@@ -151,9 +184,7 @@ def _run_fuzzer(harness_sourcecode_path: str, seeds_path: Optional[str] = None):
             log_file = open(p, "a", encoding="utf-8")
 
             proc = subprocess.Popen(
-                fuzz_command,
-                shell=True,
-                executable="/bin/bash",
+                shlex.split(fuzz_command),
                 stdout=subprocess.DEVNULL,
                 stderr=log_file,
                 env=env,
@@ -175,6 +206,7 @@ def start_fuzzing(batch_id: Optional[str] = None,  batch: Optional[Batch] = None
         harness_sourcecode_path = harness_info["harness_files"].get(selected_root_api, "")
 
         _clean_out_dir(harness_sourcecode_path)
+        _generate_initial_seeds(harness_sourcecode_path, batch)
         pid = _run_fuzzer(harness_sourcecode_path, seeds_path=seeds_path)
         if pid:
             batch.fuzzer_pids[selected_root_api] = pid
@@ -197,6 +229,7 @@ def start_fuzzing(batch_id: Optional[str] = None,  batch: Optional[Batch] = None
         pids: Dict[str, int] = {}
         for root_api, harness_sourcecode_path in harness_info["harness_files"].items():
             _clean_out_dir(harness_sourcecode_path)
+            _generate_initial_seeds(harness_sourcecode_path, batch_instance)
             pid = _run_fuzzer(harness_sourcecode_path, seeds_path=seeds_path)
             if pid:
                 pids[root_api] = pid

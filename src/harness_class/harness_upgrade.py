@@ -241,8 +241,13 @@ Target: {target_func}"""
 
 def _is_fusion_rejected(root_api: str, harness_dir: str, harness_c_path: str,
                         lib_name: str) -> bool:
-    if lib_name == "libxml2":
+    user_kw = os.environ.get("AFL_FUSION_KW", "").strip()
+    if user_kw:
+        kw = user_kw
+    elif lib_name == "libxml2":
         kw = "xml"
+    elif lib_name == "libtiff":
+        kw = "TIFF"
     elif lib_name.startswith("lib"):
         kw = lib_name[3:]
     else:
@@ -268,6 +273,61 @@ def _is_fusion_rejected(root_api: str, harness_dir: str, harness_c_path: str,
     return not accepted
 
 
+    return not fusion.evaluate_new_harness(harness_c_path, reached_target=reached_target)
+
+
+def _write_seed_boost(trace_summary: Dict, code_save_folder: str,
+                       target_func: str, root_api: str, batch: Batch):
+    """Write out/seed_boost.txt from trace data and send SIGUSR2 to afl-fuzz."""
+    import re, signal as _signal
+    qt = trace_summary.get("queue_traces", {}) or {}
+    per_trace = trace_summary.get("per_trace", qt.get("per_trace", {})) or {}
+    if not per_trace:
+        return
+
+    last_hop_ids = []
+    for tid, info in per_trace.items():
+        names = {f.get("name", "") for f in info.get("reached_functions", [])}
+        if target_func in names:
+            m = re.search(r"id:(\d+)", tid)
+            if m:
+                last_hop_ids.append(int(m.group(1)))
+
+    if not last_hop_ids:
+        logger.info("[harness_upgrade] No last-hop seeds found for boost")
+        return
+
+    boost_file = os.path.join(code_save_folder, "out", "seed_boost.txt")
+    with open(boost_file, "w") as f:
+        for sid in sorted(set(last_hop_ids)):
+            f.write(f"{sid}\n")
+    logger.info(f"[harness_upgrade] Wrote {len(set(last_hop_ids))} seed IDs to {boost_file}")
+
+    # copy last-hop seeds to in/ so AFL picks them up on restart
+    import glob as _glob2
+    queue_dir = os.path.join(code_save_folder, "out", "queue")
+    input_dir = os.path.join(code_save_folder, "in")
+    os.makedirs(input_dir, exist_ok=True)
+    copied = 0
+    for sid in sorted(set(last_hop_ids)):
+        pattern = os.path.join(queue_dir, f"id:{sid:06d},*")
+        matches = _glob2.glob(pattern)
+        for m in matches:
+            dst = os.path.join(input_dir, f"seed_boost_{sid:06d}")
+            shutil.copy2(m, dst)
+            copied += 1
+            break
+    logger.info(f"[harness_upgrade] Copied {copied} last-hop seeds to {input_dir}")
+
+    pid = batch.fuzzer_pids.get(root_api)
+    if pid:
+        try:
+            os.kill(pid, _signal.SIGUSR2)
+            logger.info(f"[harness_upgrade] Sent SIGUSR2 to afl-fuzz pid={pid}")
+        except OSError:
+            logger.warning(f"[harness_upgrade] Failed to send SIGUSR2 to pid={pid}")
+
+
 def _retry_harness_until_novel(batch: Batch, root_api: str, h: harness,
                                  code_save_folder: str, code_file: str,
                                  llm: Any, plan: Dict, target_func: str,
@@ -285,7 +345,7 @@ def _retry_harness_until_novel(batch: Batch, root_api: str, h: harness,
         except Exception:
             pass
         plan_text = json.dumps(plan, indent=2, ensure_ascii=False)
-        prompt = HARNESS_REGENERATE_PROMPT.substitute(
+        prompt = HARNESS_REGENERATE_PROMPT.safe_substitute(
             lib_name=batch.lib_name,
             target_func=target_func,
             plan_json=plan_text,
@@ -488,6 +548,12 @@ def harness_upgrade_procedure(batch: Batch, root_api: str, reach_rate_micro_thre
                     llm.generate_dict(h, call_chain, harness_memory_text=harness_memory_text)
                 except Exception as e:
                     logger.warning(f"[harness_upgrade] Dict upgrade failed: {e}")
+                # seed boost: write last-hop seeds to seed_boost.txt, send SIGUSR2
+                try:
+                    _write_seed_boost(sampled_queue_seed_runtime_trace_result,
+                                      code_save_folder, target_func, root_api, batch)
+                except Exception as e:
+                    logger.warning(f"[harness_upgrade] Seed boost failed: {e}")
             return True
         
         elif type == "only_modified_harness":

@@ -1,0 +1,13 @@
+cve_id,lib,lib_version,bug_type,bug_func,bug_file,api_call_chain
+CVE-2025-49794,libxml2,2.14.4,Use-After-Free,xmlSchematronGetNode,schematron.c,"xmlSchematronValidateDoc → xmlSchematronRunTest → xmlSchematronGetNode"
+CVE-2026-12912,libtiff,4.7.0,Heap Buffer Overflow,PixarLogDecode,tif_pixarlog.c,"TIFFReadRGBAImage → PixarLogDecode"
+CVE-2023-52356,libtiff,4.5.0,SEGV / Heap Buffer Overflow,TIFFReadRGBATileExt,tif_getimage.c,"TIFFClientOpen → TIFFReadRGBATileExt"
+CVE-2022-34266,libtiff,4.0.2,SEGV (null/invalid pointer),TIFFFetchStripThing,tif_dirread.c,"TIFFFdOpen → TIFFReadDirectory → TIFFFetchStripThing"
+CVE-2023-52355,libtiff,4.5.0,DoS (integer overflow → OOM),TIFFRasterScanlineSize64,tif_strip.c,"TIFFClientOpen → TIFFRasterScanlineSize64 → _TIFFmalloc"
+CVE-2026-22695,libpng,1.6.53,Heap Buffer Overread,png_image_read_direct_scaled,pngread.c,"png_image_finish_read → png_image_read_direct_scaled"
+CVE-2025-64506,libpng,1.6.40,Heap Buffer Overread,png_write_image_8bit,pngwrite.c,"png_image_write_to_memory → png_image_write_main → png_write_image_8bit"
+CVE-2019-7317,libpng,1.6.34,Use-After-Free,png_image_free,png.c,"png_image_begin_read_from_stdio → png_image_finish_read → png_image_error → png_image_free"
+CVE-2018-13785,libpng,1.6.34,DoS (integer overflow → division-by-zero),png_check_chunk_length,pngrutil.c,"png_process_data → png_check_chunk_length"
+CVE-2025-52194,libsndfile,1.2.2,Integer Overflow → Heap Buffer Overflow,ircam_read_header,ircam.c,"sf_open_virtual → ircam_open → ircam_read_header"
+CVE-2019-8907,libmagic (file),5.35,Stack Buffer Overflow / OOB Read,do_core_note,readelf.c,"magic_descriptor → file_buffer → file_tryelf → dophn_core → do_core_note"
+CVE-2012-1571,libmagic (file),5.10,Heap Buffer Overread,cdf_read_short_sector,cdf.c,"magic_buffer → file_trycdf → cdf_read_summary_info → cdf_read_sector_chain → cdf_read_short_sector_chain → cdf_read_short_sector"

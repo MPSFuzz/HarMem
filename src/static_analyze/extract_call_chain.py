@@ -26,10 +26,13 @@ def get_label_by_Node(graph:nx.DiGraph ,node) -> Any:
     return labels
 
 def get_Node_by_label(graph:nx.DiGraph, labels) -> Any:
+    if isinstance(labels, str):
+        labels = [labels]
+    label_set = set(labels)
     nodes = []
 
     for node, data in graph.nodes(data=True):
-        if 'label' in data and data['label'].strip('""').strip('{}') in labels:
+        if 'label' in data and data['label'].strip('""').strip('{}') in label_set:
             nodes.append(node)
 
     return nodes

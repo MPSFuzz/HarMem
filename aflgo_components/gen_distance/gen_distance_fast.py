@@ -213,7 +213,8 @@ def calculating_distances(args):
         #     pass
 
         if cfg.stat().st_size == 0: return
-        dd_cleanup(cfg)     # for python version
+        if not args.python_only:
+            dd_cleanup(cfg)     # for C version distance.bin
         bn = cfg.name
         if bn.startswith("cfg.") and bn.endswith(".dot"):
             name = bn[len("cfg."): -len(".dot")]

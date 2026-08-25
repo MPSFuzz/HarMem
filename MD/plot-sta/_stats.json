@@ -1,0 +1,89 @@
+{
+  "per_lib": {
+    "lua": {
+      "folders": 4,
+      "files": 5,
+      "bugs": [
+        "LUA001",
+        "LUA002",
+        "LUA003",
+        "LUA004"
+      ]
+    },
+    "libpng": {
+      "folders": 3,
+      "files": 7,
+      "bugs": [
+        "PNG002",
+        "PNG003",
+        "PNG005",
+        "PNG006",
+        "PNG007"
+      ]
+    },
+    "libsndfile": {
+      "folders": 5,
+      "files": 6,
+      "bugs": [
+        "SND005",
+        "SND015",
+        "SND017",
+        "SND022",
+        "SND025"
+      ]
+    },
+    "sqlite3": {
+      "folders": 2,
+      "files": 4,
+      "bugs": [
+        "SQL002",
+        "SQL003",
+        "SQL014",
+        "SQL018"
+      ]
+    },
+    "libtiff": {
+      "folders": 7,
+      "files": 12,
+      "bugs": [
+        "TIF001",
+        "TIF0012",
+        "TIF002",
+        "TIF003",
+        "TIF005",
+        "TIF006",
+        "TIF007",
+        "TIF009",
+        "TIF011",
+        "TIF017"
+      ]
+    },
+    "libxml2": {
+      "folders": 10,
+      "files": 20,
+      "bugs": [
+        "XML001",
+        "XML002",
+        "XML003",
+        "XML004",
+        "XML005",
+        "XML006",
+        "XML007",
+        "XML008",
+        "XML009",
+        "XML012",
+        "XML014",
+        "XML015",
+        "XML016",
+        "XML017"
+      ]
+    }
+  },
+  "totals": {
+    "official_harness_files": 7,
+    "official_bugs": 80,
+    "generated_folders": 31,
+    "generated_files": 54,
+    "generated_bugs": 42
+  }
+}

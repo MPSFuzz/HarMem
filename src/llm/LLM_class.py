@@ -15,11 +15,8 @@ from src.cve_helper.cve_partial_prompt_render import render_cve_hints_for_skelet
 
 #TODO: 添加一个从LLM获得字典的接口
 
-openai.api_key = "sk-Va6tOrqn4ulxsYc6226cE01dEfAf4509B6C0EdEb1aAe2672"   #  fxm
-# openai.api_key = "sk-tt38idkFn5fBhmvCF5AdB32fA90d4f71A8417d5b7fE77030" # group ys
-openai.base_url = "https://api.gpt.ge/v1/"
-# openai.base_url = "https://api.v3.cm/v1/"
-# openai.base_url = "https://api.vveai.com/v1/"
+openai.api_key = "sk-f63c0c4930d74a27bf440dfb9c5cc51f"   #  DeepSeek 官方 key
+openai.base_url = "https://api.deepseek.com"            #  DeepSeek 官方 API
 openai.default_headers = {"x-foo": "true"}
 
 logger = get_logger(__name__)
@@ -32,7 +29,7 @@ class LLM:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.timeout = timeout or int(os.environ.get("LLM_TIMEOUT", "180"))
-        self.model = model or os.environ.get("LLM_MODEL") or "gpt-5.4"
+        self.model = model or os.environ.get("LLM_MODEL") or "deepseek-chat"
 
         # cve_helper related attributes
         self.phase_A_context = {}
@@ -154,7 +151,7 @@ class LLM:
                 content = json.loads(result)
                 h.code = content["code"]
                 h.compile_command = content["compile_command"]
-                h.save_code_to_file()
+                h.update_code_file()
                 h.complete_compile_command()
                 logger.info(f"[LLM] regenerate_harness attempt {attempt} succeeded")
                 return True
@@ -239,7 +236,10 @@ class LLM:
         for attempt in range(1, self.max_retries + 1):
             try:
                 # fix_prompt = HARNESS_FIX_PROMPT % (self.plan, h.code, h.compile_command, h.compile_result)
-                h.compile_result = h.compile_result[:200]
+                if isinstance(h.compile_result, str):
+                    h.compile_result = h.compile_result[:200]
+                else:
+                    h.compile_result = str(h.compile_result or "")[:200]
                 fix_prompt = HARNESS_FIX_PROMPT % (h.code, h.compile_command, h.compile_result)
 
                 response = openai.chat.completions.create(
@@ -361,6 +361,9 @@ class LLM:
                 new_lines = [bytes_to_afl_dict_line(token_to_bytes(v)) for v in cleaned_tokens]
                 added = [l for l in new_lines if l not in old_set]
                 merged = old_lines + added
+                if len(merged) > 100:
+                    merged = merged[-100:]
+                    logger.info(f"[LLM] Dict truncated to 100 tokens")
 
                 with open(dict_save_file, "w", encoding="utf-8") as f:
                     for line in merged:
@@ -548,7 +551,8 @@ class LLM:
                         logger.warning("[LLM] generator type but no generator_code, falling back")
                         return None
                     from src.fuzz_components.fuzz_runner import _execute_seed_generator
-                    generated_files = _execute_seed_generator(generator_code, str(seed_save_path))
+                    generated_files = _execute_seed_generator(generator_code, str(seed_save_path),
+                                                               script_dir=str(Path(h.code_save_folder)))
                     if not generated_files:
                         logger.warning("[LLM] seed generator produced no files")
                         return None
