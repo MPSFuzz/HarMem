@@ -5,46 +5,46 @@ import sys
 
 def load_call_graph(dot_file: str) -> nx.DiGraph:
     """
-    从 .dot 文件加载图形。
-    如果失败，则打印错误信息并退出程序。
+    Load a graph from a .dot file.
+    If it fails, print an error message and exit the program.
     """
     try:
-        # 使用 nx_pydot，它需要 pydot 库 (graphviz的Python接口)
+        # Use nx_pydot, which requires the pydot library (Python interface to Graphviz)
         G = nx.drawing.nx_pydot.read_dot(dot_file)
         return nx.DiGraph(G)
     except FileNotFoundError:
-        sys.exit(f"错误: 文件未找到 '{dot_file}'")
+        sys.exit(f"Error: file not found '{dot_file}'")
     except Exception as e:
-        sys.exit(f"错误: 加载 .dot 文件失败。请确保安装了 'pydot' 和 Graphviz。\n原因: {e}")
+        sys.exit(f"Error: failed to load .dot file. Please make sure 'pydot' and Graphviz are installed.\nReason: {e}")
 
 def visualize_full_graph(graph: nx.DiGraph):
     """
-    可视化完整的调用图。
+    Visualize the complete call graph.
     """
-    print(f"正在可视化图形... (包含 {len(graph.nodes())} 个节点和 {len(graph.edges())} 条边)")
-    print("对于大图，这可能需要一些时间，请稍候...")
+    print(f"Visualizing graph... ({len(graph.nodes())} nodes and {len(graph.edges())} edges)")
+    print("For large graphs, this may take some time, please wait...")
     
     plt.figure(figsize=(25, 20))
 
-    # 对于大图，kamada_kawai_layout 通常比 spring_layout 更快且布局更清晰
-    # 如果图不是连通的，它会报错，所以我们添加一个try-except来处理
+    # For large graphs, kamada_kawai_layout is usually faster and produces a cleaner layout than spring_layout
+    # It raises an error if the graph is not connected, so we add a try-except to handle it
     try:
         pos = nx.kamada_kawai_layout(graph)
     except nx.NetworkXError:
-        print("警告: 图不是连通的，回退到 spring_layout。布局可能需要更长时间。")
+        print("Warning: graph is not connected, falling back to spring_layout. The layout may take longer.")
         pos = nx.spring_layout(graph, k=0.5, iterations=50)
 
-    # 提取所有节点的标签用于显示，如果不存在则使用节点ID
+    # Extract labels for all nodes for display, falling back to the node ID if absent
     labels = {node: data.get('label', node).strip('""').strip('{}') for node, data in graph.nodes(data=True)}
 
     nx.draw_networkx_nodes(graph, pos, node_size=250, node_color='skyblue', alpha=0.9)
     nx.draw_networkx_edges(graph, pos, edge_color='gray', arrowsize=12, alpha=0.7)
 
-    # 为了避免标签重叠，只在节点数较少时显示标签
+    # To avoid overlapping labels, only draw labels when the number of nodes is small
     if len(graph) < 200:
         nx.draw_networkx_labels(graph, pos, labels, font_size=7, verticalalignment='center')
     else:
-        print("节点过多，为保持清晰，已跳过绘制函数名标签。")
+        print("Too many nodes; skipping function name labels to keep the plot clear.")
         
     plt.title("Call Graph Visualization", size=20)
     plt.axis('off')
@@ -52,9 +52,9 @@ def visualize_full_graph(graph: nx.DiGraph):
     plt.show()
 
 def main():
-    parser = argparse.ArgumentParser(description="从 .dot 文件中加载并可视化一个调用图。")
+    parser = argparse.ArgumentParser(description="Load and visualize a call graph from a .dot file.")
     
-    parser.add_argument("dot_file", help="需要可视化的 .dot 文件的路径。")
+    parser.add_argument("dot_file", help="Path to the .dot file to visualize.")
     
     args = parser.parse_args()
     
